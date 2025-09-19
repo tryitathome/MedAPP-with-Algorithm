@@ -46,7 +46,7 @@ yarn build
 | 角色 | 默认端口 / 来源 | 说明 |
 |------|----------------|------|
 | 前端 Next.js | 3000（`apps/frontend/package.json` 中 `next dev --port 3000`） | 浏览器访问入口 |
-| 后端 API | 5000（未设置 PORT 时默认） | yarn dev 情况下，无显式覆盖 |
+| 后端 API  | yarn dev 情况下，无显式覆盖 |
 | 后端（`yarn dev:all`） | 5050（脚本内设置 `$env:PORT=5050`） | 同时设置 `NO_DB=true`，适合算法联调 |
 | 静态分割/上传图片访问 | 同后端端口(`/uploads/...`) | Express 静态中间件提供 |
 
@@ -180,17 +180,7 @@ POST /api/segmentation
 
 ## 8. 常见调试技巧
 
-1. 图片无法显示
-   - 检查浏览器控制台最终图片 URL 是否指向 `http://localhost:<PORT>/uploads/...`
-   - 若返回 404，确认后端 `uploads/` 目录是否生成目标文件
-2. YOLO 检测失败
-   - 后端日志若出现 `No module named 'ultralytics'`，需在 YOLO 环境安装：`pip install ultralytics`
-3. 分割超时
-   - 默认 120s 超时（`execAsync`），大图建议压缩后再分割
-4. CORS 报错
-   - 确认前端访问地址已在后端 `allowedOrigins` 列表
-5. 状态丢失/返回诊断页为空
-   - 分割页返回前会清除 `oral_current_patient_data`，若需要保留可在按钮逻辑中移除该清除操作
+见对应位置的报错提示
 
 ---
 
