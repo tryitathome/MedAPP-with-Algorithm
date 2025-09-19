@@ -1,0 +1,13 @@
+{
+  "watch": ["src"],
+  "ext": "ts,json",
+  "ignore": [
+    "uploads",
+    "uploads/**",
+    "src/uploads/**",
+    "**/uploads/**",
+    "temp",
+    "temp/**"
+  ],
+  "delay": "200"
+}

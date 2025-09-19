@@ -1,0 +1,73 @@
+# ---- Python ----
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+*.so
+*.egg-info/
+.eggs/
+.build/
+.dist/
+
+# Virtual env
+.env/
+.venv/
+venv/
+ENV/
+
+# Jupyter
+.ipynb_checkpoints/
+
+# ---- Node / Web ----
+node_modules/
+dist/
+build/
+.cache/
+.next/
+yarn-error.log
+npm-debug.log
+pnpm-debug.log
+
+# Logs
+logs/
+*.log
+
+# IDE / Editor
+.vscode/
+.idea/
+*.swp
+.DS_Store
+Thumbs.db
+
+# Data / Temp
+*.tmp
+*.temp
+cache/
+outputs/
+
+# Model artifacts (track via LFS instead)
+# 留空在仓库但不直接提交：
+!/models/.gitkeep
+
+# Large generated images
+*.png
+*.jpg
+*.jpeg
+!README*.png
+!docs/**/*.png
+
+# Exclude test result artifacts
+/test_results/
+/MiniInferenceResults/
+/evaluation_results/
+
+# Python packaging
+*.whl
+
+# Misc
+coverage/
+htmlcov/
+pytest_cache/
+.mypy_cache/
+
+tags

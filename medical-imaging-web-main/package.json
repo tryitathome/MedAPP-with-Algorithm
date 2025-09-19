@@ -1,0 +1,35 @@
+{
+  "name": "medical-imaging-monorepo",
+  "version": "1.0.0",
+  "private": true,
+  "resolutions": {
+    "@types/express": "^4.17.21",
+    "@types/express-serve-static-core": "^4.17.31"
+  },
+  "workspaces": [
+    "apps/frontend",
+    "apps/backend",
+    "packages/*"
+  ],
+  "scripts": {
+  "dev": "concurrently -n FRONTEND,BACKEND -c blue,green \"yarn workspace medical-imaging-web-frontend dev\" \"yarn workspace medical-imaging-web-backend dev\"",
+  "dev:all": "concurrently -n FRONTEND,BACKEND -c blue,green \"yarn workspace medical-imaging-web-frontend dev\" \"pwsh -NoProfile -Command '$env:FRONTEND_URL=\"http://localhost:3000\"; $env:PORT=\"5050\"; $env:NO_DB=\"true\"; yarn workspace medical-imaging-web-backend dev'\"",
+    "dev:frontend": "yarn workspace medical-imaging-web-frontend dev",
+    "dev:backend": "yarn workspace medical-imaging-web-backend dev",
+    "build": "yarn workspace medical-imaging-web-frontend build & yarn workspace medical-imaging-web-backend build",
+    "build:frontend": "yarn workspace medical-imaging-web-frontend build",
+    "build:backend": "yarn workspace medical-imaging-web-backend build",
+    "clean": "rm -rf node_modules apps/*/node_modules packages/*/node_modules",
+    "reset": "yarn run clean && yarn install"
+  },
+  "dependencies": {
+    "express": "^4.18.2",
+    "multer": "^1.4.5-lts.1"
+  },
+  "devDependencies": {
+    "concurrently": "^8.2.0",
+    "typescript": "^5.0.0",
+    "@types/express": "^4.17.21",
+    "@types/multer": "^1.4.7"
+  }
+}
