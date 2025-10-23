@@ -253,9 +253,38 @@ pip install mmengine mmdet==3.* opencv-python
 1. 不在版本控制中泄露真实患者隐私数据；
 2. 若新增模型或脚本，请在“Python 环境与依赖位置”表中追加；
 3. 因重构变更 API 路径或上传策略，务必同步第 6 节数据流示意。
-
+4. 
 
 ---
 
-文档版本：v1.0  （生成日期：2025-09-17）  
+## 14. 更新日志
+
+- 更新25.10.23
+
+统一Python路径配置与修复后端路径别名解析
+
+- 新增统一Python路径配置系统
+  - 创建 python-paths.ts 配置加载器，支持环境变量和JSON配置文件
+  - 添加 .env.example 和 python-paths.example.json 示例文件
+  - 支持三种Python环境：classification, yoloDetection, segmentation
+
+- 修复后端tsconfig路径别名
+  - 更新 tsconfig.json 添加 @shared/* 通配别名
+  - 引入 tsc-alias 和 tsconfig-paths 支持运行时路径解析
+  - 修改 dev 和 build 脚本支持路径别名
+
+- 重构服务层Python路径管理
+  - diagnosis.service.ts: 移除硬编码路径，使用loadPythonPaths()
+  - segmentation.service.ts: 移除硬编码路径，改为相对路径+环境变量可覆盖
+  - 改进 checkEnvironment() 方法支持命令名和完整路径两种检查方式
+
+- 更新文档
+  - 在 A_ORAL_MODULE_DEVELOPER_GUIDE.md 添加Python路径配置章节
+  - 说明配置优先级、示例和环境依赖
+
+这些更改使代码能在不同机器上运行，无需修改硬编码路径。"
+
+---
+
+文档版本：v1.0  （生成日期：2025-10-23）  
 维护人：口腔黏膜智能诊断模块研发团队
