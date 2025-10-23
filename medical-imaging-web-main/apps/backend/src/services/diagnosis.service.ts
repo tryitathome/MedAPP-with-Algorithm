@@ -46,7 +46,10 @@ export class DiagnosisService {
       console.log('Local image path:', imagePath);
       
       // 2. 构建 Python 脚本调用命令
-  const pythonExecutable = process.env.PYTHON_EXE_PATH || 'C:\\Users\\tryitathome\\.conda\\envs\\LMCLASSIFY310\\python.exe';
+        // 加载统一 Python 路径配置（避免硬编码）
+        const { loadPythonPaths } = require('../config/python-paths');
+        const pyCfg = loadPythonPaths();
+        const pythonExecutable = pyCfg.classification;
   // Resolve MedAPP workspace root (../../../../../ from current file)
   const workspaceRoot = path.resolve(__dirname, '../../../../..');
   const scriptPath = path.join(workspaceRoot, 'Classify-LM-Simple-OralImages', 'classify_image.py');
@@ -165,11 +168,10 @@ export class DiagnosisService {
       const workspaceRoot = path.resolve(__dirname, '../../../../..');
 
       // YOLO paths and params
-      // 使用与二分类不同的独立 YOLO Python 解释器，优先读取 YOLO_PYTHON_EXE_PATH
-      // 回退到用户提供的 D:\\MyPrograms\\Python3.9.9\\python.exe （请确保该环境已安装 ultralytics 等依赖）
-      const pythonExecutable = process.env.YOLO_PYTHON_EXE_PATH 
-        || process.env.PYTHON_EXE_PATH  // 兼容旧变量（不推荐，仅作为兜底）
-        || 'D:\\MyPrograms\\Python3.9.9\\python.exe';
+  // 使用与二分类不同的独立 YOLO Python 解释器，通过统一配置加载（python-paths.ts）
+        const { loadPythonPaths } = require('../config/python-paths');
+        const pyCfg = loadPythonPaths();
+        const pythonExecutable = pyCfg.yoloDetection || pyCfg.classification;
 
       // 运行前的存在性检查（尽量在抛出前给出清晰日志）
       const fs = require('fs');

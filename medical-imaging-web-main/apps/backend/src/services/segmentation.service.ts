@@ -3,6 +3,7 @@ import { exec } from 'child_process';
 import path from 'path';
 import fs from 'fs';
 import { promisify } from 'util';
+import { loadPythonPaths } from '../config/python-paths';
 
 const execAsync = promisify(exec);
 
@@ -20,12 +21,14 @@ export interface SegmentationResult {
 }
 
 export class SegmentationService {
-  private readonly pythonPath = 'C:\\Users\\tryitathome\\.conda\\envs\\MMDETECTION\\python.exe';
-  private readonly mmdetectionDir = 'D:\\MyWorkSpace\\MedAPP\\MMDETECTION_mini';
-  private readonly scriptPath = 'D:\\MyWorkSpace\\MedAPP\\MMDETECTION_mini\\image_demo.py';
-  private readonly configPath = 'D:\\MyWorkSpace\\MedAPP\\MMDETECTION_mini\\eval_ZJY_1102_mask2\\mask2former_swin_s.py';
-  private readonly weightsPath = 'D:\\MyWorkSpace\\MedAPP\\MMDETECTION_mini\\eval_ZJY_1102_mask2\\Swing-S-75000-best-data.pth';
-  private readonly defaultOutputDir = 'eval_results';
+  private readonly pyCfg = loadPythonPaths();
+  private readonly pythonPath = this.pyCfg.segmentation || this.pyCfg.classification || 'python';
+  private readonly workspaceRoot = path.resolve(__dirname, '../../../../..');
+  private readonly mmdetectionDir = path.join(this.workspaceRoot, 'MMDETECTION_mini');
+  private readonly scriptPath = path.join(this.mmdetectionDir, 'image_demo.py');
+  private readonly configPath = process.env.MMDET_CONFIG_PATH || path.join(this.mmdetectionDir, 'eval_ZJY_1102_mask2', 'mask2former_swin_s.py');
+  private readonly weightsPath = process.env.MMDET_WEIGHTS_PATH || path.join(this.mmdetectionDir, 'eval_ZJY_1102_mask2', 'Swing-S-75000-best-data.pth');
+  private readonly defaultOutputDir = process.env.MMDET_OUTPUT_DIR || 'eval_results';
   private readonly uploadsDir = path.join(__dirname, '../../uploads'); // 后端 uploads 目录
 
   /**
@@ -124,10 +127,20 @@ export class SegmentationService {
    */
   async checkEnvironment(): Promise<boolean> {
     try {
-      // 检查Python环境
-      if (!fs.existsSync(this.pythonPath)) {
-        console.error(`Python环境不存在: ${this.pythonPath}`);
-        return false;
+      // 检查Python环境 - 如果是完整路径则检查文件存在，如果是命令名则尝试执行
+      if (path.isAbsolute(this.pythonPath)) {
+        if (!fs.existsSync(this.pythonPath)) {
+          console.error(`Python环境不存在: ${this.pythonPath}`);
+          return false;
+        }
+      } else {
+        // 对于 "python" 这样的命令名，尝试执行 --version 来验证
+        try {
+          await execAsync(`"${this.pythonPath}" --version`, { timeout: 5000 });
+        } catch (error) {
+          console.error(`Python命令无法执行: ${this.pythonPath}`, error);
+          return false;
+        }
       }
 
       // 检查脚本文件

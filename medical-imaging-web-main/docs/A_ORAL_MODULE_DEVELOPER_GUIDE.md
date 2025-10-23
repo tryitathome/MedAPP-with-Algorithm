@@ -71,6 +71,44 @@ yarn build
 | 深度检测（YOLO 推理） | `YOLO_PYTHON_EXE_PATH` > `PYTHON_EXE_PATH` > `D:\MyPrograms\Python3.9.9\python.exe` | `ultralytics`, `opencv-python`, `torch`, `numpy` | 脚本：`YOLO12-Simplified-OralImages/Yolo12Inference.py`，输出 JSON + 可视化图像 |
 | 实例分割（Mask2Former / MMDetection） | `C:\Users\tryitathome\.conda\envs\MMDETECTION\python.exe` | `mmdet`, `mmengine`, `torch`, `opencv-python` 等 | 脚本：`MMDETECTION_mini/image_demo.py` |
 
+### 🔧 Python 路径统一配置（新）
+
+为避免在代码中硬编码本地用户路径，现在后端通过以下优先级解析 Python 解释器：
+
+1. 环境变量：`PYTHON_EXE_PATH`, `YOLO_PYTHON_EXE_PATH`, `SEG_PYTHON_EXE_PATH`
+2. 配置文件：`python-paths.json` （可放在 `apps/backend/` 或仓库根目录）
+3. 最终回退：系统 `python` 命令（可能失败，需用户自行安装）
+
+示例 `apps/backend/python-paths.json`：
+
+```json
+{
+   "classification": "C:/tools/miniconda/envs/med-classify/python.exe",
+   "yoloDetection": "C:/tools/miniconda/envs/med-yolo/python.exe",
+   "segmentation": "C:/tools/miniconda/envs/med-mmdet/python.exe"
+}
+```
+
+也可只放部分键，例如只指定一个 `classification`，其余回退使用它。
+
+环境变量示例（`.env` 参考 `.env.example`）：
+
+```bash
+PYTHON_EXE_PATH=C:/tools/miniconda/envs/med-classify/python.exe
+YOLO_PYTHON_EXE_PATH=C:/tools/miniconda/envs/med-yolo/python.exe
+SEG_PYTHON_EXE_PATH=C:/tools/miniconda/envs/med-mmdet/python.exe
+```
+
+后端运行日志中会输出解析后的总结：
+`[python-paths] classification=...; yoloDetection=...; segmentation=...`
+
+请确保各环境已安装对应依赖：
+
+- 分类：`torch torchvision numpy`
+- YOLO：`ultralytics opencv-python torch numpy`
+- MMDetection：`mmdet mmengine torch opencv-python` 等（参考官方安装指南）
+
+> 如果部署在 Linux / 服务器，路径改为 `/opt/conda/envs/med-classify/bin/python` 形式即可。
 建议：为三者分别建立 Conda 环境，避免依赖冲突。必要时可在文档末添加安装脚本模板。
 
 ---

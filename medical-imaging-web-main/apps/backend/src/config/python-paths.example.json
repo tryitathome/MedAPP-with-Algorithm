@@ -1,0 +1,5 @@
+{
+  "classification": "C:/path/to/your/python_envs/LMCLASSIFY/python.exe",
+  "yoloDetection": "C:/path/to/your/python_envs/YOLO/python.exe",
+  "segmentation": "C:/path/to/your/python_envs/MMDETECTION/python.exe"
+}
