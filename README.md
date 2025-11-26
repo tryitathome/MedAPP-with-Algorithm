@@ -18,7 +18,7 @@ AI 模型及脚本：
 
 | 模块 | 目录 | 主要脚本 | 权重/模型 | 说明 |
 |------|------|----------|-----------|------|
-| 二分类 / 三分类（初筛 + 多分类） | `Classify-LM-Simple-OralImages/` | `classify_image.py` | `best_model.pth` / `best_model_2class.pth` / `best_155epoch_shengkouV2.pt`（部分留存） | 由后端 `DiagnosisService.analyzeOral` 调用（分类） |
+| 二分类 / 三分类（初筛 + 多分类） | `Classify-LM-Simple-OralImages/` | `classify_image.py` | `best_model_2class.pth` | 由后端 `DiagnosisService.analyzeOral` 调用（分类） |
 | 深度检测（YOLO 多类别检测+框+再计算最大得分） | `YOLO12-Simplified-OralImages/` | `Yolo12Inference.py` | `best_155epoch_shengkouV2.pt` | 后端 `analyzeOralDeep` 使用 `--single-json` 输出 |
 | 病灶实例分割 | `MMDETECTION_mini/` | `image_demo.py` | `eval_ZJY_1102_mask2/*.pth` | 后端 `SegmentationService.runSegmentation` 调用 |
 
@@ -71,7 +71,7 @@ yarn build
 | 深度检测（YOLO 推理） | `YOLO_PYTHON_EXE_PATH` > `PYTHON_EXE_PATH` > `D:\MyPrograms\Python3.9.9\python.exe` | `ultralytics`, `opencv-python`, `torch`, `numpy` | 脚本：`YOLO12-Simplified-OralImages/Yolo12Inference.py`，输出 JSON + 可视化图像 |
 | 实例分割（Mask2Former / MMDetection） | `C:\Users\tryitathome\.conda\envs\MMDETECTION\python.exe` | `mmdet`, `mmengine`, `torch`, `opencv-python` 等 | 脚本：`MMDETECTION_mini/image_demo.py` |
 
-建议：为三者分别建立 Conda 环境，避免依赖冲突。必要时可在文档末添加安装脚本模板。
+建议：为三者分别建立 Conda 环境，避免依赖冲突。由于整体体积过大部分文件未上传至Github，如需这些文件请向作者索取。
 
 ---
 
@@ -184,7 +184,7 @@ POST /api/segmentation
 
 ---
 
-## 9. 建议的未来改进（可选）
+## 9. 建议的未来改进-by GPT5
 
 | 方向 | 建议 |
 |------|------|
@@ -253,11 +253,15 @@ pip install mmengine mmdet==3.* opencv-python
 1. 不在版本控制中泄露真实患者隐私数据；
 2. 若新增模型或脚本，请在“Python 环境与依赖位置”表中追加；
 3. 因重构变更 API 路径或上传策略，务必同步第 6 节数据流示意。
-4. 
+
 
 ---
 
 ## 14. 更新日志
+
+- 更新25.11.26
+
+修复了一些由GPT生成的Readme胡说八道中错误的部分
 
 - 更新25.10.23
 
