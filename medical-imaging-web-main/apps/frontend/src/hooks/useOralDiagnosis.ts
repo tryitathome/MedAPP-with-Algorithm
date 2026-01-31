@@ -199,10 +199,10 @@ export const useOralDiagnosis = (): UseOralDiagnosisReturn => {
       
       // Update state with results
       setDetectionResults(detectionResults);
-  setDiagnosisResponse(diagnosisResponse);
+      setDiagnosisResponse(diagnosisResponse);
       setDetectionComplete(true);
       setIsDetecting(false);
-  setBasicOPMDCache(detectionResults.OPMD); // 缓存基础阶段 OPMD
+      setBasicOPMDCache(detectionResults.OPMD); // 缓存基础阶段 OPMD
       
     } catch (error) {
       console.error('Detection error:', error);

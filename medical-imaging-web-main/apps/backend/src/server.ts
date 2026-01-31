@@ -2,7 +2,7 @@ import express from 'express';
 import cors from 'cors';
 import helmet from 'helmet';
 import dotenv from 'dotenv';
-import { connectDatabase } from './config/database';
+import { testConnection } from './config/supabase';
 import { logger } from './utils/logger';
 import { errorHandler } from './middleware/error.middleware';
 import routes from './routes';
@@ -86,9 +86,12 @@ const startServer = async () => {
   try {
     // Allow skipping DB in development when NO_DB=true
     if (process.env.NO_DB === 'true') {
-      logger.warn('NO_DB is enabled: skipping MongoDB connection');
+      logger.warn('NO_DB is enabled: skipping Supabase connection');
     } else {
-      await connectDatabase();
+      const connected = await testConnection();
+      if (!connected) {
+        throw new Error('Failed to connect to Supabase');
+      }
     }
 
     app.listen(PORT, () => {

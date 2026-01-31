@@ -1,10 +1,61 @@
 // src/services/diagnosis.service.ts
 import { DiagnosisResult, CreateDiagnosisRequest, DiagnosisResponse } from '@shared/types';
-import { DiagnosisModel } from '../models/Diagnosis';
+import { supabase } from '../config/supabase';
+import { DiagnosisInsert, DiagnosisRow } from '../types/database.types';
 import { createError } from '../middleware/error.middleware';
 import { exec } from 'child_process';
 import { promisify } from 'util';
 import path from 'path';
+
+// Helper: Convert app DiagnosisResult to Supabase insert format
+function toDbFormat(data: DiagnosisResult): DiagnosisInsert {
+  return {
+    patient_id: data.patientId,
+    type: data.type as 'oral' | 'gastritis',
+    image_url: data.imageUrl,
+    confidence: data.results.confidence,
+    finding: data.results.finding || '',
+    recommendation: data.results.recommendation,
+    severity: data.results.severity || null,
+    report_recommendation: data.results.reportRecommendation || null,
+    status_code: data.results.statusCode || null,
+    olp_score: data.results.OLP || null,
+    olk_score: data.results.OLK || null,
+    ooml_score: data.results.OOML || null,
+    opmd_score: data.results.OPMD || null,
+    knowledge: data.results.knowledge || null,
+    annotated_image_url: (data.results as any).annotatedImage || null,
+    detections: (data.results as any).detections || null,
+  };
+}
+
+// Helper: Convert Supabase row to app DiagnosisResult format
+function fromDbFormat(row: DiagnosisRow): DiagnosisResult {
+  return {
+    _id: row.id,
+    patientId: row.patient_id,
+    type: row.type,
+    imageUrl: row.image_url,
+    results: {
+      confidence: row.confidence,
+      finding: row.finding,
+      findings: [row.finding],
+      recommendation: row.recommendation,
+      severity: row.severity || undefined,
+      reportRecommendation: row.report_recommendation || undefined,
+      statusCode: row.status_code || undefined,
+      OLP: row.olp_score || undefined,
+      OLK: row.olk_score || undefined,
+      OOML: row.ooml_score || undefined,
+      OPMD: row.opmd_score || undefined,
+      knowledge: row.knowledge || undefined,
+      annotatedImage: row.annotated_image_url || undefined,
+      detections: row.detections || undefined,
+    },
+    createdAt: new Date(row.created_at),
+    updatedAt: new Date(row.updated_at),
+  } as DiagnosisResult;
+}
 
 const execAsync = promisify(exec);
 
@@ -18,14 +69,25 @@ export class DiagnosisService {
         severity: 'medium'
       };
 
-      const diagnosis = new DiagnosisModel({
+      const diagnosisPayload: DiagnosisResult = {
         patientId: diagnosisData.patientId,
         type: 'gastritis',
         imageUrl: diagnosisData.imageUrl || '/uploads/temp-image.jpg',
         results: mockResult
-      });
+      };
 
-      return await diagnosis.save();
+      if (process.env.NO_DB === 'true') {
+        return diagnosisPayload;
+      }
+
+      const { data, error } = await supabase
+        .from('diagnoses')
+        .insert(toDbFormat(diagnosisPayload) as any)
+        .select()
+        .single();
+
+      if (error) throw error;
+      return fromDbFormat(data as DiagnosisRow);
     } catch (error) {
       throw createError('Failed to analyze gastritis image', 500);
     }
@@ -116,8 +178,14 @@ export class DiagnosisService {
         return resultPayload;
       }
 
-      const diagnosis = new DiagnosisModel(resultPayload);
-      return await diagnosis.save();
+      const { data, error } = await supabase
+        .from('diagnoses')
+        .insert(toDbFormat(resultPayload) as any)
+        .select()
+        .single();
+
+      if (error) throw error;
+      return fromDbFormat(data as DiagnosisRow);
       
     } catch (error) {
       console.error('AI analysis error:', error);
@@ -154,8 +222,14 @@ export class DiagnosisService {
         return fallbackPayload;
       }
 
-      const diagnosis = new DiagnosisModel(fallbackPayload);
-      return await diagnosis.save();
+      const { data: fallbackData, error: fallbackError } = await supabase
+        .from('diagnoses')
+        .insert(toDbFormat(fallbackPayload) as any)
+        .select()
+        .single();
+
+      if (fallbackError) throw fallbackError;
+      return fromDbFormat(fallbackData as DiagnosisRow);
     }
   }
 
@@ -283,8 +357,15 @@ export class DiagnosisService {
       if (process.env.NO_DB === 'true') {
         return payload;
       }
-      const diagnosis = new DiagnosisModel(payload);
-      return await diagnosis.save();
+
+      const { data: deepData, error: deepError } = await supabase
+        .from('diagnoses')
+        .insert(toDbFormat(payload) as any)
+        .select()
+        .single();
+
+      if (deepError) throw deepError;
+      return fromDbFormat(deepData as DiagnosisRow);
     } catch (e) {
       console.error('[DeepDetection] error', e);
       throw createError('Deep detection failed', 500);
@@ -567,20 +648,38 @@ export class DiagnosisService {
   }
 
   async getDiagnosisById(id: string): Promise<DiagnosisResult> {
-    const diagnosis = await DiagnosisModel.findById(id);
-    if (!diagnosis) {
+    const { data, error } = await supabase
+      .from('diagnoses')
+      .select()
+      .eq('id', id)
+      .single();
+
+    if (error || !data) {
       throw createError('Diagnosis not found', 404);
     }
-    return diagnosis;
+    return fromDbFormat(data as DiagnosisRow);
   }
 
   async getDiagnosisByPatient(patientId: string): Promise<DiagnosisResult[]> {
-    return await DiagnosisModel.find({ patientId }).sort({ createdAt: -1 });
+    const { data, error } = await supabase
+      .from('diagnoses')
+      .select()
+      .eq('patient_id', patientId)
+      .order('created_at', { ascending: false });
+
+    if (error) throw error;
+    return (data || []).map((row: any) => fromDbFormat(row as DiagnosisRow));
   }
 
   async deleteDiagnosis(id: string): Promise<void> {
-    const diagnosis = await DiagnosisModel.findByIdAndDelete(id);
-    if (!diagnosis) {
+    const { data, error } = await supabase
+      .from('diagnoses')
+      .delete()
+      .eq('id', id)
+      .select()
+      .single();
+
+    if (error || !data) {
       throw createError('Diagnosis not found', 404);
     }
   }
