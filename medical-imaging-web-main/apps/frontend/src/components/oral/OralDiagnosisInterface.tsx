@@ -435,9 +435,10 @@ const OralDiagnosisInterface: React.FC = () => {
         onClose={() => setShowInstructions(false)}
       />
       
-      <ErrorModal 
+      <ErrorModal
         isOpen={showError}
         onClose={() => setShowError(false)}
+        errorMessage={error}
       />
       
       <KnowledgeModal 

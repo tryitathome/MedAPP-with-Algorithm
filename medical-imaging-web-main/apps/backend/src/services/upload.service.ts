@@ -1,6 +1,9 @@
 // src/services/upload.service.ts
 import fs from 'fs';
 import path from 'path';
+import { getSupabase } from '../config/supabase';
+
+const BUCKET_NAME = 'oral_images';
 
 export interface ProcessedImageResult {
   filename: string;
@@ -23,18 +26,45 @@ export class UploadService {
     }
   }
 
+  private getContentType(filename: string): string {
+    const ext = path.extname(filename).toLowerCase();
+    if (ext === '.png') return 'image/png';
+    if (ext === '.webp') return 'image/webp';
+    return 'image/jpeg';
+  }
+
+  private async uploadToSupabase(filename: string, buffer: Buffer): Promise<string> {
+    const supabase = getSupabase();
+    const contentType = this.getContentType(filename);
+
+    const { error } = await supabase.storage
+      .from(BUCKET_NAME)
+      .upload(filename, buffer, { contentType, upsert: true });
+
+    if (error) {
+      console.error('Supabase storage upload error:', error);
+      throw new Error(`Failed to upload to Supabase: ${error.message}`);
+    }
+
+    const { data: urlData } = supabase.storage
+      .from(BUCKET_NAME)
+      .getPublicUrl(filename);
+
+    return urlData.publicUrl;
+  }
+
   async processImage(file: Express.Multer.File): Promise<ProcessedImageResult> {
     try {
-      // For now, we'll just return the original file info
-      // In the future, you can add image processing logic here
-  // Return a URL that the frontend can fetch directly via backend route
-  const imageUrl = `/api/upload/${file.filename}`;
-  const filePath = path.join(this.uploadsDir, file.filename);
-      
+      const filePath = path.join(this.uploadsDir, file.filename);
+
+      // Upload to Supabase Storage
+      const buffer = fs.readFileSync(filePath);
+      const imageUrl = await this.uploadToSupabase(file.filename, buffer);
+
       return {
         filename: file.filename,
-        imageUrl: imageUrl,
-        filePath: filePath,
+        imageUrl,
+        filePath,
         size: file.size
       };
     } catch (error) {
@@ -45,10 +75,20 @@ export class UploadService {
 
   async deleteImage(filename: string): Promise<void> {
     try {
+      // Delete from local disk
       const filePath = path.join(this.uploadsDir, filename);
-      
       if (fs.existsSync(filePath)) {
         fs.unlinkSync(filePath);
+      }
+
+      // Delete from Supabase Storage
+      const supabase = getSupabase();
+      const { error } = await supabase.storage
+        .from(BUCKET_NAME)
+        .remove([filename]);
+
+      if (error) {
+        console.warn('Supabase storage delete warning:', error);
       }
     } catch (error) {
       console.error('Delete image error:', error);
@@ -58,7 +98,6 @@ export class UploadService {
 
   async saveBase64Image(base64Data: string): Promise<ProcessedImageResult> {
     try {
-      // 解析base64数据
       const matches = base64Data.match(/^data:image\/([a-zA-Z]+);base64,(.+)$/);
       if (!matches) {
         throw new Error('无效的base64图片格式');
@@ -66,16 +105,16 @@ export class UploadService {
 
       const ext = matches[1] === 'jpeg' ? 'jpg' : matches[1];
       const imageBuffer = Buffer.from(matches[2], 'base64');
-      
-      // 生成文件名
+
       const filename = `seg_${Date.now()}_${Math.random().toString(36).substring(7)}.${ext}`;
       const filePath = path.join(this.uploadsDir, filename);
-      
-      // 保存文件
+
+      // Save locally
       fs.writeFileSync(filePath, imageBuffer);
-      
-      const imageUrl = `/api/upload/${filename}`;
-      
+
+      // Upload to Supabase Storage
+      const imageUrl = await this.uploadToSupabase(filename, imageBuffer);
+
       return {
         filename,
         imageUrl,

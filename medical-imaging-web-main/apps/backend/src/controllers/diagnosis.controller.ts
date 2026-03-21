@@ -31,7 +31,8 @@ export class DiagnosisController {
   analyzeOral = async (req: Request, res: Response): Promise<void> => {
     try {
       const diagnosisData: CreateDiagnosisRequest = req.body;
-      const result = await this.diagnosisService.analyzeOral(diagnosisData);
+      // TODO: switch back to analyzeOral when Python paths are configured
+      const result = await this.diagnosisService.analyzeOralDummy(diagnosisData);
 
       console.log('Oral diagnosis result:', result); // Debug log
       
@@ -41,6 +42,7 @@ export class DiagnosisController {
         message: 'Oral analysis completed successfully'
       });
     } catch (error) {
+      console.error('Oral analysis controller error:', error);
       res.status(500).json({
         success: false,
         message: error instanceof Error ? error.message : 'Failed to analyze oral image'

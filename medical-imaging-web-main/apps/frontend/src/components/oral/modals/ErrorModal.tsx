@@ -7,9 +7,10 @@ import Modal from '@/components/ui/Modal';
 interface ErrorModalProps {
   isOpen: boolean;
   onClose: () => void;
+  errorMessage?: string | null;
 }
 
-const ErrorModal: React.FC<ErrorModalProps> = ({ isOpen, onClose }) => {
+const ErrorModal: React.FC<ErrorModalProps> = ({ isOpen, onClose, errorMessage }) => {
   const colors = useColors();
   
   return (
@@ -24,6 +25,11 @@ const ErrorModal: React.FC<ErrorModalProps> = ({ isOpen, onClose }) => {
           <AlertCircle className="w-6 h-6 text-red-400" />
           <span className={`${colors.textPrimary} font-medium`}>哎呀！系统的后端界面爆炸了！</span>
         </div>
+        {errorMessage && (
+          <div className="mb-4 p-3 rounded-lg bg-red-500/10 border border-red-500/30">
+            <p className={`text-sm text-red-400 font-mono break-all`}>{errorMessage}</p>
+          </div>
+        )}
         <div className={`${colors.textSecondary} space-y-2 mb-6`}>
           <p>请检查造成这种错误的常见原因：</p>
           <p>（1）系统的前端界面（默认http://localhost:3000/）和后端界面（默认http://localhost:5050/）无法通讯，在浏览器按下F12键查看日志可以看到相关报错信息；</p>

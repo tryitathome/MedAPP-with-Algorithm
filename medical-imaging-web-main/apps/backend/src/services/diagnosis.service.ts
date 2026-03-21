@@ -109,12 +109,12 @@ export class DiagnosisService {
       
       // 2. 构建 Python 脚本调用命令
         // 加载统一 Python 路径配置（避免硬编码）
-        const { loadPythonPaths } = require('../config/python-paths');
-        const pyCfg = loadPythonPaths();
-        const pythonExecutable = pyCfg.classification;
-  // Resolve MedAPP workspace root (../../../../../ from current file)
-  const workspaceRoot = path.resolve(__dirname, '../../../../..');
-  const scriptPath = path.join(workspaceRoot, 'Classify-LM-Simple-OralImages', 'classify_image.py');
+      const { loadPythonPaths } = require('../config/python-paths');
+      const pyCfg = loadPythonPaths();
+      const pythonExecutable = pyCfg.classification;
+      // Resolve MedAPP workspace root (../../../../../ from current file)
+      const workspaceRoot = path.resolve(__dirname, '../../../../..');
+      const scriptPath = path.join(workspaceRoot, 'Classify-LM-Simple-OralImages', 'classify_image.py');
       const command = `"${pythonExecutable}" "${scriptPath}" "${imagePath}"`;
       
       console.log('Executing command:', command);
@@ -154,19 +154,19 @@ export class DiagnosisService {
       
       // 6. 保存诊断结果到数据库
       // If NO_DB=true, return directly without DB persistence
-    const aiFinding = this.generateFindingFromAiResult(aiResult);
-    const { statusCode } = this.judgeStatusFromAi(aiResult);
-    const texts = this.generateTextsByStatus(statusCode, aiResult.confidence);
-    const resultPayload: DiagnosisResult = {
+      const aiFinding = this.generateFindingFromAiResult(aiResult);
+      const { statusCode } = this.judgeStatusFromAi(aiResult);
+      const texts = this.generateTextsByStatus(statusCode, aiResult.confidence);
+      const resultPayload: DiagnosisResult = {
         patientId: diagnosisData.patientId,
         type: 'oral',
         imageUrl: diagnosisData.imageUrl || '/uploads/temp-image.jpg',
         results: {
           ...oralResults,
           confidence: aiResult.confidence,
-      finding: texts.finding,
-      findings: [texts.finding],
-      recommendation: texts.recommendation,
+          finding: texts.finding,
+          findings: [texts.finding],
+          recommendation: texts.recommendation,
           knowledge: texts.knowledge,
           reportRecommendation: texts.reportRecommendation,
           statusCode: statusCode as any,
@@ -193,15 +193,15 @@ export class DiagnosisService {
       // === 备用方案：如果 AI 分析失败，回退到模拟数据 ===
       console.log('Falling back to mock data due to AI analysis error');
       
-  // Removed artificial delay to speed up error fallback response
+      // Removed artificial delay to speed up error fallback response
 
       // Generate mock oral-specific results (原有的模拟逻辑)
       const mockOralResults = this.generateMockOralResults();
       
-    const fallbackFinding = this.generateFinding();
-    const fallbackStatus = 'OPMD_SUSPECTED';
-    const fallbackTexts = this.generateTextsByStatus(fallbackStatus, mockOralResults.OLK);
-    const fallbackPayload: DiagnosisResult = {
+      const fallbackFinding = this.generateFinding();
+      const fallbackStatus = 'OPMD_SUSPECTED';
+      const fallbackTexts = this.generateTextsByStatus(fallbackStatus, mockOralResults.OLK);
+      const fallbackPayload: DiagnosisResult = {
         patientId: diagnosisData.patientId,
         type: 'oral',
         imageUrl: diagnosisData.imageUrl || '/uploads/temp-image.jpg',
@@ -231,6 +231,43 @@ export class DiagnosisService {
       if (fallbackError) throw fallbackError;
       return fromDbFormat(fallbackData as DiagnosisRow);
     }
+  }
+
+  async analyzeOralDummy(diagnosisData: CreateDiagnosisRequest): Promise<DiagnosisResult> {
+    console.log('Using dummy oral analysis (Python AI disabled)');
+
+    const mockOralResults = this.generateMockOralResults();
+    const fallbackStatus = 'OPMD_SUSPECTED';
+    const fallbackTexts = this.generateTextsByStatus(fallbackStatus, mockOralResults.OLK);
+    const fallbackPayload: DiagnosisResult = {
+      patientId: diagnosisData.patientId,
+      type: 'oral',
+      imageUrl: diagnosisData.imageUrl || '/uploads/temp-image.jpg',
+      results: {
+        ...mockOralResults,
+        confidence: Math.max(mockOralResults.OLP, mockOralResults.OLK, mockOralResults.OOML),
+        finding: fallbackTexts.finding,
+        findings: [fallbackTexts.finding],
+        recommendation: fallbackTexts.recommendation,
+        knowledge: fallbackTexts.knowledge,
+        reportRecommendation: fallbackTexts.reportRecommendation,
+        statusCode: fallbackStatus,
+        severity: this.calculateSeverity(mockOralResults)
+      }
+    };
+
+    if (process.env.NO_DB === 'true') {
+      return fallbackPayload;
+    }
+
+    const { data, error } = await supabase
+      .from('diagnoses')
+      .insert(toDbFormat(fallbackPayload) as any)
+      .select()
+      .single();
+
+    if (error) throw error;
+    return fromDbFormat(data as DiagnosisRow);
   }
 
   async analyzeOralDeep(diagnosisData: CreateDiagnosisRequest): Promise<DiagnosisResult> {

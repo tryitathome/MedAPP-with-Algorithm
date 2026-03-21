@@ -117,74 +117,78 @@ export const useOralDiagnosis = (): UseOralDiagnosisReturn => {
       setDiagnosisResponse(null);
       setError(null);
       // 1. 推断/创建患者 ID
-      let patientId: string | null = null;
+      let patientId: string | null = 'dummy-patient-0';
       let parsed = null as ReturnType<typeof parseFolderName> | null;
 
-      // (a) 尝试从 File 对象的 webkitRelativePath 或名称解析父文件夹
-      const relPath = (selectedFile as any).webkitRelativePath as string | undefined;
-      if (relPath) {
-        const parts = relPath.split('/');
-        if (parts.length >= 2) {
-          const folderName = parts[parts.length - 2];
-          parsed = parseFolderName(folderName);
-        }
-      }
-      // (b) 如果拖拽/单文件上传无法得到 webkitRelativePath，可提示用户或后续扩展
-      if (!parsed) {
-        console.log('[OralDiagnosis] 未能从文件路径解析患者信息，将使用默认占位患者');
-      }
+      // For testing purposes, let us use Dummy Patient for now
 
-      // (c) 如果已经有当前患者且不是 N/A，并且未解析到新的信息，复用现有 id
-      if (!parsed && patientManagement.currentPatientData.id !== 'N/A') {
-        patientId = patientManagement.currentPatientData.id;
-      } else if (!parsed) {
-        // 只有在没有任何患者信息且无法解析时，才添加虚拟患者
-        patientManagement.addDummyPatient();
-      }
+      patientManagement.addDummyPatient();
 
-      // (d) 如果解析成功，尝试根据唯一键(姓名+案号+日期)生成稳定 id（避免重复创建）
-      if (parsed) {
-        // 组合一个 deterministic ID
-        const stableKey = `${parsed.name}-${parsed.caseNumber}-${parsed.date}`;
-        patientId = stableKey; // 直接作为 id 使用（后端 getPatientById 会 404 如未创建）
-        try {
-          await patientManagement.addPatientById(patientId); // 若存在则加载
-        } catch (e) {
-          // 不存在则创建
-          console.log('[OralDiagnosis] patient not found, creating new:', patientId);
-          try {
-            const created = await patientService.createPatient({
-              name: parsed.name,
-              age: 0, // 未知占位
-              gender: 'other',
-              medicalHistory: [parsed.diagnosis]
-            });
-            // 后端生成的 id (可能是 patient- 时间戳 )
-            patientId = created.data.id;
-            // 重新加入管理
-            await patientManagement.addPatientById(patientId);
-          } catch (ce) {
-            console.error('[OralDiagnosis] 创建患者失败，回退到占位 ID', ce);
-          }
-        }
-      }
+      // // (a) 尝试从 File 对象的 webkitRelativePath 或名称解析父文件夹
+      // const relPath = (selectedFile as any).webkitRelativePath as string | undefined;
+      // if (relPath) {
+      //   const parts = relPath.split('/');
+      //   if (parts.length >= 2) {
+      //     const folderName = parts[parts.length - 2];
+      //     parsed = parseFolderName(folderName);
+      //   }
+      // }
+      // // (b) 如果拖拽/单文件上传无法得到 webkitRelativePath，可提示用户或后续扩展
+      // if (!parsed) {
+      //   console.log('[OralDiagnosis] 未能从文件路径解析患者信息，将使用默认占位患者');
+      // }
 
-      if (!patientId) {
-        // 最后兜底：创建一个占位患者（只创建一次）
-        try {
-          const created = await patientService.createPatient({
-            name: '隐私检测模式-匿名患者',
-            age: 0,
-            gender: 'other',
-            medicalHistory: []
-          });
-            patientId = created.data.id;
-            await patientManagement.addPatientById(patientId);
-        } catch (e) {
-          console.warn('[OralDiagnosis] 创建占位患者失败，使用 patient-0 继续（可能导致 404）');
-          patientId = 'patient-0';
-        }
-      }
+      // // (c) 如果已经有当前患者且不是 N/A，并且未解析到新的信息，复用现有 id
+      // if (!parsed && patientManagement.currentPatientData.id !== 'N/A') {
+      //   patientId = patientManagement.currentPatientData.id;
+      // } else if (!parsed) {
+      //   // 只有在没有任何患者信息且无法解析时，才添加虚拟患者
+      //   patientManagement.addDummyPatient();
+      // }
+
+      // // (d) 如果解析成功，尝试根据唯一键(姓名+案号+日期)生成稳定 id（避免重复创建）
+      // if (parsed) {
+      //   // 组合一个 deterministic ID
+      //   const stableKey = `${parsed.name}-${parsed.caseNumber}-${parsed.date}`;
+      //   patientId = stableKey; // 直接作为 id 使用（后端 getPatientById 会 404 如未创建）
+      //   try {
+      //     await patientManagement.addPatientById(patientId); // 若存在则加载
+      //   } catch (e) {
+      //     // 不存在则创建
+      //     console.log('[OralDiagnosis] patient not found, creating new:', patientId);
+      //     try {
+      //       const created = await patientService.createPatient({
+      //         name: parsed.name,
+      //         age: 0, // 未知占位
+      //         gender: 'other',
+      //         medicalHistory: [parsed.diagnosis]
+      //       });
+      //       // 后端生成的 id (可能是 patient- 时间戳 )
+      //       patientId = created.data.id;
+      //       // 重新加入管理
+      //       await patientManagement.addPatientById(patientId);
+      //     } catch (ce) {
+      //       console.error('[OralDiagnosis] 创建患者失败，回退到占位 ID', ce);
+      //     }
+      //   }
+      // }
+
+      // if (!patientId) {
+      //   // 最后兜底：创建一个占位患者（只创建一次）
+      //   try {
+      //     const created = await patientService.createPatient({
+      //       name: '隐私检测模式-匿名患者',
+      //       age: 0,
+      //       gender: 'other',
+      //       medicalHistory: []
+      //     });
+      //       patientId = created.data.id;
+      //       await patientManagement.addPatientById(patientId);
+      //   } catch (e) {
+      //     console.warn('[OralDiagnosis] 创建占位患者失败，使用 patient-0 继续（可能导致 404）');
+      //     patientId = 'patient-0';
+      //   }
+      // }
 
       // 2. 调用诊断接口
       const diagnosisResponse = await oralDiagnosisService.analyzeOralImage(patientId!, selectedFile);
