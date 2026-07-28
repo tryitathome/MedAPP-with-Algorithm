@@ -1,10 +1,15 @@
 // hooks/useBatchPatientManagement.ts
 import { useState, useCallback, useEffect, useMemo } from 'react';
-import { Patient } from '@shared/types';
-import { PatientFolderInfo } from '@/utils/folderParser';
+import type { Patient } from '@shared/types';
+import type { PatientFolderInfo } from '@/utils/folderParser';
+import {
+  applicationPatientId,
+  type ImportedPatientFolder,
+  type ImportedPatientImage
+} from '@/utils/folderPatientImport';
 
 interface PatientWithImages extends Patient {
-  images: File[];
+  images: ImportedPatientImage[];
   currentImageIndex: number;
   folderInfo?: PatientFolderInfo;
 }
@@ -19,6 +24,7 @@ interface UseBatchPatientManagementReturn {
   // 图片级别状态
   currentImageIndex: number;
   currentImage: File | null;
+  currentImagePatientId: string | null;
   currentImageUrl: string | null;
   totalImages: number; // 当前患者的图片总数
   
@@ -39,8 +45,8 @@ interface UseBatchPatientManagementReturn {
   goToImage: (index: number) => void;
   
   // 批量导入
-  importPatients: (patientFolders: PatientFolderInfo[]) => void;
-  addSinglePatient: (file: File, patientInfo?: PatientFolderInfo) => void;
+  importPatients: (patientFolders: ImportedPatientFolder[]) => void;
+  addSinglePatient: (file: File, patientInfo?: PatientFolderInfo, persistedPatientId?: string) => void;
   clear: () => void;
   
   // 辅助方法
@@ -50,18 +56,22 @@ interface UseBatchPatientManagementReturn {
 }
 
 // 将PatientFolderInfo转换为Patient格式
-function convertToPatient(folderInfo: PatientFolderInfo): PatientWithImages {
+function convertToPatient(folderInfo: ImportedPatientFolder): PatientWithImages {
+  const { patientId, images, ...metadata } = folderInfo;
   return {
-    id: `${folderInfo.caseNumber}-${Date.now()}`,
+    id: patientId,
     name: folderInfo.name,
     index: folderInfo.caseNumber,
     history: folderInfo.diagnosis,
     date: folderInfo.date,
     biopsyConfirmed: folderInfo.hasBiopsy,
     doctor: 'N/A',
-    images: folderInfo.images,
+    images,
     currentImageIndex: 0,
-    folderInfo
+    folderInfo: {
+      ...metadata,
+      images: images.map(image => image.file)
+    }
   };
 }
 
@@ -80,7 +90,9 @@ export const useBatchPatientManagement = (): UseBatchPatientManagementReturn => 
     : realPatients.findIndex(p => p.id === currentPatient?.id) + 1;
   
   const currentImageIndex = currentPatient?.currentImageIndex || 0;
-  const currentImage = currentPatient?.images[currentImageIndex] || null;
+  const currentImportedImage = currentPatient?.images[currentImageIndex] ?? null;
+  const currentImage = currentImportedImage?.file ?? null;
+  const currentImagePatientId = currentImportedImage?.patientId ?? null;
   
   // 获取当前图片URL - 添加调试信息
   const currentImageUrl = useMemo(() => {
@@ -180,7 +192,7 @@ export const useBatchPatientManagement = (): UseBatchPatientManagementReturn => 
   }, [currentPatient, currentPatientIndex]);
   
   // 批量导入 - 修改为累积添加而不是覆盖
-  const importPatients = useCallback((patientFolders: PatientFolderInfo[]) => {
+  const importPatients = useCallback((patientFolders: ImportedPatientFolder[]) => {
     console.log('[BatchPatientManagement] importPatients 被调用, 新增患者数:', patientFolders.length, '当前已有患者数:', patients.length);
     patientFolders.forEach((p, idx) => {
       console.log(`[BatchPatientManagement] 新增患者 ${idx + 1}: ${p.name} (${p.caseNumber}) - 图片数: ${p.images.length}`);
@@ -205,7 +217,7 @@ export const useBatchPatientManagement = (): UseBatchPatientManagementReturn => 
       
       // 立即为新添加的第一个患者的第一张图片创建URL
       if (newPatients.length > 0 && newPatients[0].images.length > 0) {
-        const firstNewImage = newPatients[0].images[0];
+        const firstNewImage = newPatients[0].images[0].file;
         const url = URL.createObjectURL(firstNewImage);
         setImageUrls(prev => new Map(prev).set(firstNewImage, url));
         console.log('[BatchPatientManagement] 立即创建新患者第一张图片URL:', url, 'for:', firstNewImage.name);
@@ -240,7 +252,7 @@ export const useBatchPatientManagement = (): UseBatchPatientManagementReturn => 
             date: new Date().toISOString().split('T')[0],
             biopsyConfirmed: false,
             doctor: 'System',
-            images: [placeholderFile],
+            images: [{ file: placeholderFile, patientId: 'placeholder-patient' }],
             currentImageIndex: 0,
             folderInfo: {
               name: '【系统占位】',
@@ -265,7 +277,7 @@ export const useBatchPatientManagement = (): UseBatchPatientManagementReturn => 
           
           // 立即为第一个真实患者的第一张图片创建URL
           if (newPatients.length > 0 && newPatients[0].images.length > 0) {
-            const firstRealImage = newPatients[0].images[0];
+            const firstRealImage = newPatients[0].images[0].file;
             const url = URL.createObjectURL(firstRealImage);
             setImageUrls(prev => new Map(prev).set(firstRealImage, url));
             console.log('[BatchPatientManagement] 立即创建第一个真实患者的图片URL:', url, 'for:', firstRealImage.name);
@@ -282,25 +294,38 @@ export const useBatchPatientManagement = (): UseBatchPatientManagementReturn => 
           if (newPatients.length > 0 && patient === newPatients[0] && image === newPatients[0].images[0]) {
             return;
           }
-          createImageUrl(image);
+          createImageUrl(image.file);
         });
       });
     }, 0);
   }, [patients, imageUrls, createImageUrl]);
   
   // 添加单个患者
-  const addSinglePatient = useCallback((file: File, patientInfo?: PatientFolderInfo) => {
-    const patient: PatientWithImages = patientInfo 
-      ? convertToPatient(patientInfo)
+  const addSinglePatient = useCallback((file: File, patientInfo?: PatientFolderInfo, persistedPatientId?: string) => {
+    const patientId = persistedPatientId
+      ?? (patientInfo ? applicationPatientId(patientInfo) : `single-${Date.now()}`);
+    const patient: PatientWithImages = patientInfo
+      ? {
+          id: patientId,
+          name: patientInfo.name,
+          index: patientInfo.caseNumber,
+          history: patientInfo.diagnosis,
+          date: patientInfo.date,
+          biopsyConfirmed: patientInfo.hasBiopsy,
+          doctor: 'N/A',
+          images: [{ file, patientId }],
+          currentImageIndex: 0,
+          folderInfo: patientInfo
+        }
       : {
-          id: `single-${Date.now()}`,
+          id: patientId,
           name: '未知患者',
           index: 'N/A',
           history: '未知',
           date: new Date().toISOString().split('T')[0],
           biopsyConfirmed: false,
           doctor: 'N/A',
-          images: [file],
+          images: [{ file, patientId }],
           currentImageIndex: 0
         };
     
@@ -360,6 +385,7 @@ export const useBatchPatientManagement = (): UseBatchPatientManagementReturn => 
     // 图片级别状态
     currentImageIndex,
     currentImage,
+    currentImagePatientId,
     currentImageUrl,
     totalImages: currentPatient?.images.length || 0,
     

@@ -1,18 +1,15 @@
-// Supabase Database Types
-// These types match the schema defined in supabase_schema.sql
+export type Json =
+  | string
+  | number
+  | boolean
+  | null
+  | { [key: string]: Json | undefined }
+  | Json[];
 
-export type DiagnosisType = 'gastritis' | 'oral';
+export type DiagnosisType = 'gastritis' | 'oral' | 'oral-deep';
 export type SeverityLevel = 'low' | 'medium' | 'high';
 
-// Detection object (stored as JSONB)
-export interface Detection {
-  class_name: string;
-  confidence: number;
-  bbox: number[];
-}
-
-// Database row types (what comes from Supabase)
-export interface PatientRow {
+export type PatientRow = {
   id: string;
   patient_id: string;
   name: string;
@@ -25,13 +22,38 @@ export interface PatientRow {
   updated_at: string;
 }
 
-export interface DiagnosisRow {
+export type PatientInsert = {
+  id?: string;
+  patient_id: string;
+  name: string;
+  history: string;
+  date: string;
+  index: string;
+  biopsy_confirmed?: boolean | null;
+  doctor?: string | null;
+  created_at?: string;
+  updated_at?: string;
+}
+
+export type PatientUpdate = {
+  patient_id?: string;
+  name?: string;
+  history?: string;
+  date?: string;
+  index?: string;
+  biopsy_confirmed?: boolean | null;
+  doctor?: string | null;
+  updated_at?: string;
+}
+
+export type DiagnosisRow = {
   id: string;
   patient_id: string;
   type: DiagnosisType;
-  image_url: string;
+  image_object_path: string | null;
   confidence: number;
   finding: string;
+  findings: Json;
   recommendation: string;
   severity: SeverityLevel | null;
   report_recommendation: string | null;
@@ -40,30 +62,23 @@ export interface DiagnosisRow {
   olk_score: number | null;
   ooml_score: number | null;
   opmd_score: number | null;
+  osf_score: number | null;
   knowledge: string | null;
-  annotated_image_url: string | null;
-  detections: Detection[] | null;
+  annotated_image_object_path: string | null;
+  segmentation_image_object_path: string | null;
+  detections: Json | null;
   created_at: string;
   updated_at: string;
 }
 
-// Insert types (for creating new records)
-export interface PatientInsert {
-  patient_id: string;
-  name: string;
-  history: string;
-  date: string;
-  index: string;
-  biopsy_confirmed?: boolean | null;
-  doctor?: string | null;
-}
-
-export interface DiagnosisInsert {
+export type DiagnosisInsert = {
+  id?: string;
   patient_id: string;
   type: DiagnosisType;
-  image_url: string;
+  image_object_path?: string | null;
   confidence: number;
   finding: string;
+  findings?: Json;
   recommendation: string;
   severity?: SeverityLevel | null;
   report_recommendation?: string | null;
@@ -72,42 +87,17 @@ export interface DiagnosisInsert {
   olk_score?: number | null;
   ooml_score?: number | null;
   opmd_score?: number | null;
+  osf_score?: number | null;
   knowledge?: string | null;
-  annotated_image_url?: string | null;
-  detections?: Detection[] | null;
+  annotated_image_object_path?: string | null;
+  segmentation_image_object_path?: string | null;
+  detections?: Json | null;
+  created_at?: string;
+  updated_at?: string;
 }
 
-// Update types (for updating existing records)
-export interface PatientUpdate {
-  patient_id?: string;
-  name?: string;
-  history?: string;
-  date?: string;
-  index?: string;
-  biopsy_confirmed?: boolean | null;
-  doctor?: string | null;
-}
+export type DiagnosisUpdate = Partial<DiagnosisInsert>;
 
-export interface DiagnosisUpdate {
-  patient_id?: string;
-  type?: DiagnosisType;
-  image_url?: string;
-  confidence?: number;
-  finding?: string;
-  recommendation?: string;
-  severity?: SeverityLevel | null;
-  report_recommendation?: string | null;
-  status_code?: string | null;
-  olp_score?: number | null;
-  olk_score?: number | null;
-  ooml_score?: number | null;
-  opmd_score?: number | null;
-  knowledge?: string | null;
-  annotated_image_url?: string | null;
-  detections?: Detection[] | null;
-}
-
-// Supabase Database type definition (for typed client)
 export type Database = {
   public: {
     Tables: {
@@ -115,15 +105,21 @@ export type Database = {
         Row: PatientRow;
         Insert: PatientInsert;
         Update: PatientUpdate;
+        Relationships: [];
       };
       diagnoses: {
         Row: DiagnosisRow;
         Insert: DiagnosisInsert;
         Update: DiagnosisUpdate;
+        Relationships: [];
       };
     };
-    Views: {};
-    Functions: {};
-    Enums: {};
+    Views: Record<string, never>;
+    Functions: Record<string, never>;
+    Enums: {
+      diagnosis_type: DiagnosisType;
+      severity_level: SeverityLevel;
+    };
+    CompositeTypes: Record<string, never>;
   };
-};
+}

@@ -18,7 +18,7 @@ interface UsePatientManagementReturn {
   setCurrentPatientData: (patient: Patient) => void;
   refreshCurrentPatient: () => Promise<void>;
   loadAllPatients: () => Promise<void>;
-  addPatientById: (patientId: string) => Promise<void>;
+  addPatientById: (patientId: string) => Promise<Patient | null>;
   addDummyPatient: () => void;
   
   // Navigation
@@ -103,6 +103,7 @@ export const usePatientManagement = (): UsePatientManagementReturn => {
     
     try {
       const response = await patientService.getPatientById(patientId);
+      if (!response) return null;
       
       if (response.success) {
         const newPatient = response.data;
@@ -130,11 +131,14 @@ export const usePatientManagement = (): UsePatientManagementReturn => {
           }
         });
         setCurrentPatientData(newPatient);
+        return newPatient;
       }
+      return null;
     } catch (error) {
       console.error('Error adding patient:', error);
       const errorMessage = error instanceof Error ? error.message : 'Failed to add patient';
       setError(errorMessage);
+      throw error;
     } finally {
       setIsLoading(false);
     }
@@ -163,7 +167,7 @@ export const usePatientManagement = (): UsePatientManagementReturn => {
     try {
       const response = await patientService.getPatientById(currentPatientData.id);
       
-      if (response.success) {
+      if (response?.success) {
         setCurrentPatientData(response.data);
         
         // Update the patient in the patients array

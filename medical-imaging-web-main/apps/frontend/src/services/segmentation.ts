@@ -3,6 +3,8 @@
 export interface SegmentationRequest {
   image?: string;     // dataURL base64
   imageUrl?: string;  // 服务器可访问的 URL
+  diagnosisId?: string;
+  patientId?: string;
   options?: Record<string, any>;
 }
 
@@ -11,6 +13,8 @@ export interface SegmentationResponse {
   maskImageUrl?: string;
   inferenceTimeMs?: number;
   modelVersion?: string;
+  diagnosisId?: string;
+  diagnosisPersisted?: boolean;
   meta?: Record<string, any>;
 }
 
@@ -70,8 +74,10 @@ export async function runSegmentation(req: SegmentationRequest): Promise<Segment
         'Content-Type': 'application/json',
       },
       body: JSON.stringify({
-    image: req.image,
-    imageUrl: req.imageUrl,
+        image: req.image,
+        imageUrl: req.imageUrl,
+        diagnosisId: req.diagnosisId,
+        patientId: req.patientId,
         options: req.options
       }),
     });
@@ -97,6 +103,8 @@ export async function runSegmentation(req: SegmentationRequest): Promise<Segment
       maskImageUrl: result.data.maskImageUrl,
       inferenceTimeMs: result.data.inferenceTimeMs,
       modelVersion: result.data.modelVersion,
+      diagnosisId: result.data.diagnosisId,
+      diagnosisPersisted: result.data.diagnosisPersisted,
       meta: result.data.meta
     };
   } catch (error: any) {

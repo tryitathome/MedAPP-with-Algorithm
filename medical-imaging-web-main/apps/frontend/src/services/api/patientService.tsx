@@ -1,7 +1,7 @@
 // src/services/api/usePatientService.tsx
-import { Patient } from '@shared/types';
+import type { CreatePatientRequest, Patient } from '@shared/types';
 
-interface PatientResponse {
+export interface PatientResponse {
   success: boolean;
   data: Patient;
 }
@@ -11,41 +11,51 @@ interface PatientsResponse {
   data: Patient[];
 }
 
-class PatientService {
-  private readonly baseUrl: string;
+async function responseError(response: Response, fallback: string): Promise<Error> {
+  const errorData = await response.json().catch(() => ({})) as {
+    error?: string;
+    message?: string;
+  };
+  return new Error(errorData.error ?? errorData.message ?? fallback);
+}
 
-  constructor(baseUrl: string = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:3000/api') {
+export class PatientService {
+  private readonly baseUrl: string;
+  private readonly fetcher: typeof fetch;
+
+  constructor(
+    baseUrl: string = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:3000/api',
+    fetcher: typeof fetch = fetch
+  ) {
     this.baseUrl = baseUrl;
+    // Window.fetch is context-sensitive in browsers. Binding it once prevents
+    // `this.fetcher(...)` from invoking the native function with PatientService
+    // as its receiver (Chrome reports that as "Illegal invocation").
+    this.fetcher = fetcher.bind(globalThis);
   }
 
   /**
    * Get patient by ID
    */
-  async getPatientById(id: string): Promise<PatientResponse> {
-    const url = `${this.baseUrl}/patients/${id}`;
+  async getPatientById(id: string): Promise<PatientResponse | null> {
+    const url = `${this.baseUrl}/patients/${encodeURIComponent(id)}`;
     console.log('Fetching patient from:', url); // Debug log
-    
-    try {
-      const response = await fetch(url, {
-        method: 'GET',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-      });
 
-      if (!response.ok) {
-        const errorData = await response.json().catch(() => ({}));
-        throw new Error(errorData.message || `Failed to fetch patient: ${response.statusText}`);
-      }
+    const response = await this.fetcher(url, {
+      method: 'GET',
+      headers: {
+        'Content-Type': 'application/json',
+      },
+    });
 
-      const result = await response.json();
-      console.log('Patient fetch result:', result); // Debug log
-
-      return result;
-    } catch (error) {
-      console.error('Patient fetch error:', error);
-      throw new Error(error instanceof Error ? error.message : 'Failed to fetch patient');
+    if (response.status === 404) return null;
+    if (!response.ok) {
+      throw await responseError(response, `Failed to fetch patient: ${response.statusText}`);
     }
+
+    const result = await response.json();
+    console.log('Patient fetch result:', result); // Debug log
+    return result;
   }
 
   /**
@@ -56,7 +66,7 @@ class PatientService {
     console.log('Fetching all patients from:', url); // Debug log
     
     try {
-      const response = await fetch(url, {
+      const response = await this.fetcher(url, {
         method: 'GET',
         headers: {
           'Content-Type': 'application/json',
@@ -64,8 +74,7 @@ class PatientService {
       });
 
       if (!response.ok) {
-        const errorData = await response.json().catch(() => ({}));
-        throw new Error(errorData.message || `Failed to fetch patients: ${response.statusText}`);
+        throw await responseError(response, `Failed to fetch patients: ${response.statusText}`);
       }
 
       const result = await response.json();
@@ -81,12 +90,12 @@ class PatientService {
   /**
    * Create a new patient
    */
-  async createPatient(patientData: any): Promise<PatientResponse> {
+  async createPatient(patientData: CreatePatientRequest): Promise<PatientResponse> {
     const url = `${this.baseUrl}/patients`;
     console.log('Creating patient at:', url); // Debug log
     
     try {
-      const response = await fetch(url, {
+      const response = await this.fetcher(url, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -95,8 +104,7 @@ class PatientService {
       });
 
       if (!response.ok) {
-        const errorData = await response.json().catch(() => ({}));
-        throw new Error(errorData.message || `Failed to create patient: ${response.statusText}`);
+        throw await responseError(response, `Failed to create patient: ${response.statusText}`);
       }
 
       const result = await response.json();
@@ -113,11 +121,11 @@ class PatientService {
    * Update patient
    */
   async updatePatient(id: string, patientData: any): Promise<PatientResponse> {
-    const url = `${this.baseUrl}/patients/${id}`;
+    const url = `${this.baseUrl}/patients/${encodeURIComponent(id)}`;
     console.log('Updating patient at:', url); // Debug log
     
     try {
-      const response = await fetch(url, {
+      const response = await this.fetcher(url, {
         method: 'PUT',
         headers: {
           'Content-Type': 'application/json',
@@ -126,8 +134,7 @@ class PatientService {
       });
 
       if (!response.ok) {
-        const errorData = await response.json().catch(() => ({}));
-        throw new Error(errorData.message || `Failed to update patient: ${response.statusText}`);
+        throw await responseError(response, `Failed to update patient: ${response.statusText}`);
       }
 
       const result = await response.json();
@@ -144,11 +151,11 @@ class PatientService {
    * Delete patient
    */
   async deletePatient(id: string): Promise<{ success: boolean; message: string }> {
-    const url = `${this.baseUrl}/patients/${id}`;
+    const url = `${this.baseUrl}/patients/${encodeURIComponent(id)}`;
     console.log('Deleting patient at:', url); // Debug log
     
     try {
-      const response = await fetch(url, {
+      const response = await this.fetcher(url, {
         method: 'DELETE',
         headers: {
           'Content-Type': 'application/json',
@@ -156,8 +163,7 @@ class PatientService {
       });
 
       if (!response.ok) {
-        const errorData = await response.json().catch(() => ({}));
-        throw new Error(errorData.message || `Failed to delete patient: ${response.statusText}`);
+        throw await responseError(response, `Failed to delete patient: ${response.statusText}`);
       }
 
       const result = await response.json();

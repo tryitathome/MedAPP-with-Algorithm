@@ -2,6 +2,8 @@
 import { Request, Response } from 'express';
 import { DiagnosisService } from '../services/diagnosis.service';
 import { CreateDiagnosisRequest } from '@shared/types';
+import { StoredDiagnosisResult } from '../repositories/diagnosis.repository';
+import { diagnosesForApi, diagnosisForApi } from '../services/api-response.service';
 
 export class DiagnosisController {
   private diagnosisService: DiagnosisService;
@@ -14,10 +16,11 @@ export class DiagnosisController {
     try {
       const diagnosisData: CreateDiagnosisRequest = req.body;
       const result = await this.diagnosisService.analyzeGastritis(diagnosisData);
+      const responseData = await diagnosisForApi(result as StoredDiagnosisResult, true);
       
       res.status(200).json({
         success: true,
-        data: result,
+        data: responseData,
         message: 'Gastritis analysis completed successfully'
       });
     } catch (error) {
@@ -31,18 +34,17 @@ export class DiagnosisController {
   analyzeOral = async (req: Request, res: Response): Promise<void> => {
     try {
       const diagnosisData: CreateDiagnosisRequest = req.body;
-      // TODO: switch back to analyzeOral when Python paths are configured
-      const result = await this.diagnosisService.analyzeOralDummy(diagnosisData);
+      const result = await this.diagnosisService.analyzeOral(diagnosisData);
+      const responseData = await diagnosisForApi(result as StoredDiagnosisResult, true);
 
       console.log('Oral diagnosis result:', result); // Debug log
       
       res.status(200).json({
         success: true,
-        data: result,
+        data: responseData,
         message: 'Oral analysis completed successfully'
       });
     } catch (error) {
-      console.error('Oral analysis controller error:', error);
       res.status(500).json({
         success: false,
         message: error instanceof Error ? error.message : 'Failed to analyze oral image'
@@ -54,7 +56,8 @@ export class DiagnosisController {
     try {
       const diagnosisData: CreateDiagnosisRequest = req.body;
       const result = await this.diagnosisService.analyzeOralDeep(diagnosisData);
-      res.status(200).json({ success: true, data: result, message: 'Oral deep analysis completed successfully' });
+      const responseData = await diagnosisForApi(result as StoredDiagnosisResult, true);
+      res.status(200).json({ success: true, data: responseData, message: 'Oral deep analysis completed successfully' });
     } catch (error) {
       res.status(500).json({ success: false, message: error instanceof Error ? error.message : 'Failed to analyze oral image (deep)' });
     }
@@ -64,10 +67,11 @@ export class DiagnosisController {
     try {
       const { id } = req.params;
       const result = await this.diagnosisService.getDiagnosisById(id);
+      const responseData = await diagnosisForApi(result as StoredDiagnosisResult);
       
       res.status(200).json({
         success: true,
-        data: result
+        data: responseData
       });
     } catch (error) {
       const statusCode = error instanceof Error && error.message.includes('not found') ? 404 : 500;
@@ -82,10 +86,11 @@ export class DiagnosisController {
     try {
       const { patientId } = req.params;
       const results = await this.diagnosisService.getDiagnosisByPatient(patientId);
+      const responseData = await diagnosesForApi(results as StoredDiagnosisResult[]);
       
       res.status(200).json({
         success: true,
-        data: results
+        data: responseData
       });
     } catch (error) {
       res.status(500).json({

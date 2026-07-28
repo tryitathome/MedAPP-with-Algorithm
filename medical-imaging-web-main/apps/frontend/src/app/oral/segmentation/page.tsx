@@ -1,6 +1,6 @@
 // 实例分割结果展示页面
 'use client'
-import React, { useEffect, useState } from 'react';
+import React, { Suspense, useEffect, useState } from 'react';
 import { useSearchParams, useRouter } from 'next/navigation';
 import { useColors } from '@/config/colors';
 import GlassCard from '@/components/ui/GlassCard';
@@ -12,6 +12,8 @@ interface SegmentationResultDTO {
   maskImageUrl?: string;   // 可选：仅mask图
   inferenceTimeMs?: number;
   modelVersion?: string;
+  diagnosisId?: string;
+  diagnosisPersisted?: boolean;
   meta?: Record<string, any>;
 }
 
@@ -26,7 +28,7 @@ interface PatientData {
   doctor: string;
 }
 
-const OralSegmentationPage: React.FC = () => {
+const OralSegmentationContent: React.FC = () => {
   const colors = useColors();
   const params = useSearchParams();
   const router = useRouter();
@@ -117,7 +119,9 @@ const OralSegmentationPage: React.FC = () => {
             console.log('转换完成，base64 长度:', imageData.length);
           }
           
-          const seg = await runSegmentation({ image: imageData });
+          const diagnosisId = params.get('diagnosisId') ?? undefined;
+          const patientId = params.get('patientId') ?? undefined;
+          const seg = await runSegmentation({ image: imageData, diagnosisId, patientId });
           console.log('[Segmentation Page] 接收到的分割结果:', seg);
           console.log('[Segmentation Page] 叠加图URL:', seg.overlayImageUrl);
           setResult(seg);
@@ -241,7 +245,9 @@ const OralSegmentationPage: React.FC = () => {
                         imageData = await convertBlobToBase64(rawImage);
                       }
                       
-                      const seg = await runSegmentation({ image: imageData });
+                      const diagnosisId = params.get('diagnosisId') ?? undefined;
+                      const patientId = params.get('patientId') ?? undefined;
+                      const seg = await runSegmentation({ image: imageData, diagnosisId, patientId });
                       console.log('[Segmentation Page] 重新分割结果:', seg);
                       console.log('[Segmentation Page] 重新分割叠加图URL:', seg.overlayImageUrl);
                       setResult(seg);
@@ -264,5 +270,17 @@ const OralSegmentationPage: React.FC = () => {
     </main>
   );
 };
+
+const OralSegmentationPage: React.FC = () => (
+  <Suspense
+    fallback={(
+      <main className="min-h-screen bg-slate-950 flex items-center justify-center text-gray-300">
+        正在加载病灶可视化页面...
+      </main>
+    )}
+  >
+    <OralSegmentationContent />
+  </Suspense>
+);
 
 export default OralSegmentationPage;

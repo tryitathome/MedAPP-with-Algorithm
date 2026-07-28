@@ -1,65 +1,42 @@
 // src/services/diagnosis.service.ts
 import { DiagnosisResult, CreateDiagnosisRequest, DiagnosisResponse } from '@shared/types';
-import { supabase } from '../config/supabase';
-import { DiagnosisInsert, DiagnosisRow } from '../types/database.types';
 import { createError } from '../middleware/error.middleware';
 import { exec } from 'child_process';
 import { promisify } from 'util';
 import path from 'path';
-
-// Helper: Convert app DiagnosisResult to Supabase insert format
-function toDbFormat(data: DiagnosisResult): DiagnosisInsert {
-  return {
-    patient_id: data.patientId,
-    type: data.type as 'oral' | 'gastritis',
-    image_url: data.imageUrl,
-    confidence: data.results.confidence,
-    finding: data.results.finding || '',
-    recommendation: data.results.recommendation,
-    severity: data.results.severity || null,
-    report_recommendation: data.results.reportRecommendation || null,
-    status_code: data.results.statusCode || null,
-    olp_score: data.results.OLP || null,
-    olk_score: data.results.OLK || null,
-    ooml_score: data.results.OOML || null,
-    opmd_score: data.results.OPMD || null,
-    knowledge: data.results.knowledge || null,
-    annotated_image_url: (data.results as any).annotatedImage || null,
-    detections: (data.results as any).detections || null,
-  };
-}
-
-// Helper: Convert Supabase row to app DiagnosisResult format
-function fromDbFormat(row: DiagnosisRow): DiagnosisResult {
-  return {
-    _id: row.id,
-    patientId: row.patient_id,
-    type: row.type,
-    imageUrl: row.image_url,
-    results: {
-      confidence: row.confidence,
-      finding: row.finding,
-      findings: [row.finding],
-      recommendation: row.recommendation,
-      severity: row.severity || undefined,
-      reportRecommendation: row.report_recommendation || undefined,
-      statusCode: row.status_code || undefined,
-      OLP: row.olp_score || undefined,
-      OLK: row.olk_score || undefined,
-      OOML: row.ooml_score || undefined,
-      OPMD: row.opmd_score || undefined,
-      knowledge: row.knowledge || undefined,
-      annotatedImage: row.annotated_image_url || undefined,
-      detections: row.detections || undefined,
-    },
-    createdAt: new Date(row.created_at),
-    updatedAt: new Date(row.updated_at),
-  } as DiagnosisResult;
-}
+import {
+  createDiagnosisRepository,
+  DiagnosisRepository,
+  StoredDiagnosisResult
+} from '../repositories/diagnosis.repository';
+import { objectStorageService } from './object-storage.service';
 
 const execAsync = promisify(exec);
 
 export class DiagnosisService {
+  private repositoryInstance?: DiagnosisRepository;
+
+  private repository(): DiagnosisRepository {
+    this.repositoryInstance ??= createDiagnosisRepository();
+    return this.repositoryInstance;
+  }
+
+  async attachSegmentationResult(
+    diagnosisId: string,
+    patientId: string,
+    segmentationImageObjectPath: string
+  ): Promise<DiagnosisResult> {
+    const diagnosis = await this.repository().updateSegmentationImagePath(
+      diagnosisId,
+      patientId,
+      segmentationImageObjectPath
+    );
+    if (!diagnosis) {
+      throw createError('Diagnosis not found for the supplied patient', 404);
+    }
+    return diagnosis;
+  }
+
   async analyzeGastritis(diagnosisData: CreateDiagnosisRequest): Promise<DiagnosisResult> {
     try {
       const mockResult: DiagnosisResponse = {
@@ -69,25 +46,14 @@ export class DiagnosisService {
         severity: 'medium'
       };
 
-      const diagnosisPayload: DiagnosisResult = {
+      const diagnosis: StoredDiagnosisResult = {
         patientId: diagnosisData.patientId,
         type: 'gastritis',
-        imageUrl: diagnosisData.imageUrl || '/uploads/temp-image.jpg',
+        imageUrl: diagnosisData.imageUrl ?? '/uploads/temp-image.jpg',
         results: mockResult
       };
 
-      if (process.env.NO_DB === 'true') {
-        return diagnosisPayload;
-      }
-
-      const { data, error } = await supabase
-        .from('diagnoses')
-        .insert(toDbFormat(diagnosisPayload) as any)
-        .select()
-        .single();
-
-      if (error) throw error;
-      return fromDbFormat(data as DiagnosisRow);
+      return await this.repository().create(diagnosis);
     } catch (error) {
       throw createError('Failed to analyze gastritis image', 500);
     }
@@ -98,75 +64,77 @@ export class DiagnosisService {
       // === 新的真实 AI 分析逻辑 ===
       console.log('Starting AI analysis for oral image...');
       console.log('Image URL:', diagnosisData.imageUrl);
-      
+
       // 1. 从 imageUrl 提取文件名，并构建本地文件路径
       const imageUrl = diagnosisData.imageUrl || '';
       const filename = path.basename(imageUrl);
       const uploadsDir = path.join(__dirname, '../../uploads');
       const imagePath = path.join(uploadsDir, filename);
-      
+
       console.log('Local image path:', imagePath);
-      
+
       // 2. 构建 Python 脚本调用命令
-        // 加载统一 Python 路径配置（避免硬编码）
-      const { loadPythonPaths } = require('../config/python-paths');
-      const pyCfg = loadPythonPaths();
-      const pythonExecutable = pyCfg.classification;
-      // Resolve MedAPP workspace root (../../../../../ from current file)
-      const workspaceRoot = path.resolve(__dirname, '../../../../..');
+  const pythonExecutable = process.env.PYTHON_EXE_PATH || 'C:\\Users\\tryitathome\\.conda\\envs\\LMCLASSIFY310\\python.exe';
+  // Resolve MedAPP workspace root (../../../../../ from current file)
+  const workspaceRoot = path.resolve(__dirname, '../../../../..');
       const scriptPath = path.join(workspaceRoot, 'Classify-LM-Simple-OralImages', 'classify_image.py');
       const command = `"${pythonExecutable}" "${scriptPath}" "${imagePath}"`;
-      
+      const classifyTimeoutMs = Number(process.env.CLASSIFY_TIMEOUT_MS ?? 180000);
+      if (!Number.isFinite(classifyTimeoutMs) || classifyTimeoutMs <= 0) {
+        throw new Error('CLASSIFY_TIMEOUT_MS must be a positive number');
+      }
+
       console.log('Executing command:', command);
-      
+      console.log('Classification timeout (ms):', classifyTimeoutMs);
+
       // 3. 执行 Python 脚本
-      const { stdout, stderr } = await execAsync(command, { 
-        timeout: 30000, // 30秒超时
+      const { stdout, stderr } = await execAsync(command, {
+        timeout: classifyTimeoutMs,
         cwd: workspaceRoot // 设置工作目录为 MedAPP 工作区根目录
       });
-      
+
       if (stderr) {
         console.warn('Python script stderr:', stderr);
       }
-      
+
       console.log('Python script stdout:', stdout);
-      
+
       // 4. 解析 Python 脚本返回的 JSON 结果
       let aiResult;
       try {
         // 从输出中提取 JSON 部分（可能有其他日志信息）
         const lines = stdout.trim().split('\n');
         const jsonLine = lines.find(line => line.startsWith('{') && line.includes('predicted_class'));
-        
+
         if (!jsonLine) {
           throw new Error('No valid JSON found in Python script output');
         }
-        
+
         aiResult = JSON.parse(jsonLine);
         console.log('Parsed AI result:', aiResult);
       } catch (parseError) {
         console.error('Failed to parse Python script output:', parseError);
         throw new Error('Invalid response from AI analysis script');
       }
-      
+
       // 5. 将 AI 结果转换为前端期望的格式
       const oralResults = this.convertAiResultToOralFormat(aiResult);
-      
+
       // 6. 保存诊断结果到数据库
       // If NO_DB=true, return directly without DB persistence
-      const aiFinding = this.generateFindingFromAiResult(aiResult);
-      const { statusCode } = this.judgeStatusFromAi(aiResult);
-      const texts = this.generateTextsByStatus(statusCode, aiResult.confidence);
-      const resultPayload: DiagnosisResult = {
+    const aiFinding = this.generateFindingFromAiResult(aiResult);
+    const { statusCode } = this.judgeStatusFromAi(aiResult);
+    const texts = this.generateTextsByStatus(statusCode, aiResult.confidence);
+    const resultPayload: DiagnosisResult = {
         patientId: diagnosisData.patientId,
         type: 'oral',
-        imageUrl: diagnosisData.imageUrl || '/uploads/temp-image.jpg',
+        imageUrl: diagnosisData.imageUrl ?? '/uploads/temp-image.jpg',
         results: {
           ...oralResults,
           confidence: aiResult.confidence,
-          finding: texts.finding,
-          findings: [texts.finding],
-          recommendation: texts.recommendation,
+      finding: texts.finding,
+      findings: [texts.finding],
+      recommendation: texts.recommendation,
           knowledge: texts.knowledge,
           reportRecommendation: texts.reportRecommendation,
           statusCode: statusCode as any,
@@ -174,37 +142,26 @@ export class DiagnosisService {
         }
       };
 
-      if (process.env.NO_DB === 'true') {
-        return resultPayload;
-      }
+      return await this.repository().create(resultPayload as StoredDiagnosisResult);
 
-      const { data, error } = await supabase
-        .from('diagnoses')
-        .insert(toDbFormat(resultPayload) as any)
-        .select()
-        .single();
-
-      if (error) throw error;
-      return fromDbFormat(data as DiagnosisRow);
-      
     } catch (error) {
       console.error('AI analysis error:', error);
-      
+
       // === 备用方案：如果 AI 分析失败，回退到模拟数据 ===
       console.log('Falling back to mock data due to AI analysis error');
-      
-      // Removed artificial delay to speed up error fallback response
+
+  // Removed artificial delay to speed up error fallback response
 
       // Generate mock oral-specific results (原有的模拟逻辑)
       const mockOralResults = this.generateMockOralResults();
-      
-      const fallbackFinding = this.generateFinding();
-      const fallbackStatus = 'OPMD_SUSPECTED';
-      const fallbackTexts = this.generateTextsByStatus(fallbackStatus, mockOralResults.OLK);
-      const fallbackPayload: DiagnosisResult = {
+
+    const fallbackFinding = this.generateFinding();
+    const fallbackStatus = 'OPMD_SUSPECTED';
+    const fallbackTexts = this.generateTextsByStatus(fallbackStatus, mockOralResults.OLK);
+    const fallbackPayload: DiagnosisResult = {
         patientId: diagnosisData.patientId,
         type: 'oral',
-        imageUrl: diagnosisData.imageUrl || '/uploads/temp-image.jpg',
+        imageUrl: diagnosisData.imageUrl ?? '/uploads/temp-image.jpg',
         results: {
           ...mockOralResults,
           confidence: Math.max(mockOralResults.OLP, mockOralResults.OLK, mockOralResults.OOML),
@@ -218,56 +175,8 @@ export class DiagnosisService {
         }
       };
 
-      if (process.env.NO_DB === 'true') {
-        return fallbackPayload;
-      }
-
-      const { data: fallbackData, error: fallbackError } = await supabase
-        .from('diagnoses')
-        .insert(toDbFormat(fallbackPayload) as any)
-        .select()
-        .single();
-
-      if (fallbackError) throw fallbackError;
-      return fromDbFormat(fallbackData as DiagnosisRow);
+      return await this.repository().create(fallbackPayload as StoredDiagnosisResult);
     }
-  }
-
-  async analyzeOralDummy(diagnosisData: CreateDiagnosisRequest): Promise<DiagnosisResult> {
-    console.log('Using dummy oral analysis (Python AI disabled)');
-
-    const mockOralResults = this.generateMockOralResults();
-    const fallbackStatus = 'OPMD_SUSPECTED';
-    const fallbackTexts = this.generateTextsByStatus(fallbackStatus, mockOralResults.OLK);
-    const fallbackPayload: DiagnosisResult = {
-      patientId: diagnosisData.patientId,
-      type: 'oral',
-      imageUrl: diagnosisData.imageUrl || '/uploads/temp-image.jpg',
-      results: {
-        ...mockOralResults,
-        confidence: Math.max(mockOralResults.OLP, mockOralResults.OLK, mockOralResults.OOML),
-        finding: fallbackTexts.finding,
-        findings: [fallbackTexts.finding],
-        recommendation: fallbackTexts.recommendation,
-        knowledge: fallbackTexts.knowledge,
-        reportRecommendation: fallbackTexts.reportRecommendation,
-        statusCode: fallbackStatus,
-        severity: this.calculateSeverity(mockOralResults)
-      }
-    };
-
-    if (process.env.NO_DB === 'true') {
-      return fallbackPayload;
-    }
-
-    const { data, error } = await supabase
-      .from('diagnoses')
-      .insert(toDbFormat(fallbackPayload) as any)
-      .select()
-      .single();
-
-    if (error) throw error;
-    return fromDbFormat(data as DiagnosisRow);
   }
 
   async analyzeOralDeep(diagnosisData: CreateDiagnosisRequest): Promise<DiagnosisResult> {
@@ -279,10 +188,11 @@ export class DiagnosisService {
       const workspaceRoot = path.resolve(__dirname, '../../../../..');
 
       // YOLO paths and params
-  // 使用与二分类不同的独立 YOLO Python 解释器，通过统一配置加载（python-paths.ts）
-        const { loadPythonPaths } = require('../config/python-paths');
-        const pyCfg = loadPythonPaths();
-        const pythonExecutable = pyCfg.yoloDetection || pyCfg.classification;
+      // 使用与二分类不同的独立 YOLO Python 解释器，优先读取 YOLO_PYTHON_EXE_PATH
+      // 回退到用户提供的 D:\\MyPrograms\\Python3.9.9\\python.exe （请确保该环境已安装 ultralytics 等依赖）
+      const pythonExecutable = process.env.YOLO_PYTHON_EXE_PATH
+        || process.env.PYTHON_EXE_PATH  // 兼容旧变量（不推荐，仅作为兜底）
+        || 'D:\\MyPrograms\\Python3.9.9\\python.exe';
 
       // 运行前的存在性检查（尽量在抛出前给出清晰日志）
       const fs = require('fs');
@@ -351,11 +261,16 @@ export class DiagnosisService {
   const visRel = record.vis_image; // relative to tempOutDir
   // 直接使用临时目录中的可视化结果（避免复制 & 命名差异导致 404）
   const annotatedImageUrl = `/uploads/${path.basename(tempOutDir)}/${visRel.replace(/\\/g, '/')}`;
+      const annotatedImagePath = path.join(tempOutDir, visRel);
+      const annotatedImageObjectPath = await objectStorageService.uploadLocalFile(
+        annotatedImagePath,
+        objectStorageService.resultObjectPath(path.basename(visRel))
+      );
 
       const deepResults = {
-        OLP: perClassMax.OLP || 0,
-        OLK: perClassMax.OLK || 0,
-        OSF: perClassMax.OSF || 0
+        OLP: perClassMax.OLP ?? 0,
+        OLK: perClassMax.OLK ?? 0,
+        OSF: perClassMax.OSF ?? 0
       };
 
       // 计算综合 OPMD (可调整策略：这里取三类最大值)
@@ -368,7 +283,7 @@ export class DiagnosisService {
       const payload: DiagnosisResult = {
         patientId: diagnosisData.patientId,
         type: 'oral-deep',
-        imageUrl: diagnosisData.imageUrl || '/uploads/temp-image.jpg',
+        imageUrl: diagnosisData.imageUrl ?? '/uploads/temp-image.jpg',
         results: {
           // reuse oral format keys for compatibility + add OSF via spread if TS model supports
           OLP: deepResults.OLP,
@@ -386,23 +301,13 @@ export class DiagnosisService {
           // detections & annotated image 已在下方追加
           // @ts-ignore - return annotated image URL
           annotatedImage: annotatedImageUrl,
+          annotatedImageObjectPath,
           // @ts-ignore - raw detections
           detections: record.detections
         }
       } as any;
 
-      if (process.env.NO_DB === 'true') {
-        return payload;
-      }
-
-      const { data: deepData, error: deepError } = await supabase
-        .from('diagnoses')
-        .insert(toDbFormat(payload) as any)
-        .select()
-        .single();
-
-      if (deepError) throw deepError;
-      return fromDbFormat(deepData as DiagnosisRow);
+      return await this.repository().create(payload as StoredDiagnosisResult);
     } catch (e) {
       console.error('[DeepDetection] error', e);
       throw createError('Deep detection failed', 500);
@@ -416,9 +321,9 @@ export class DiagnosisService {
       OLK: 0.651,
       OOML: 0.121
     };
-    
+
     const variation = 0.15; // 15% variation
-    
+
     return {
       OLP: Math.max(0.01, Math.min(0.99, baseValues.OLP + (Math.random() - 0.5) * variation)),
       OLK: Math.max(0.01, Math.min(0.99, baseValues.OLK + (Math.random() - 0.5) * variation)),
@@ -443,7 +348,7 @@ export class DiagnosisService {
 
   private calculateSeverity(results: { OLP: number; OLK: number; OOML: number }): 'low' | 'medium' | 'high' {
     const maxValue = Math.max(results.OLP, results.OLK, results.OOML);
-    
+
     if (maxValue >= 0.7) return 'high';
     if (maxValue >= 0.4) return 'medium';
     return 'low';
@@ -458,14 +363,14 @@ export class DiagnosisService {
     // 根据 AI 预测的类别，设置相应的置信度
     const confidence = aiResult.confidence;
     const predictedClass = aiResult.predicted_class;
-    
+
     // 初始化所有类别为较低的基准值
     let results = {
       OLP: 0.0,   // 将 OLP 置零以验证真实对接
       OLK: 0.0,   // 将 OLK 置零以验证真实对接
       OPMD: 0.0   // 新字段，映射为 AI 返回的总置信度
     };
-    
+
     // 根据预测类别设置主要置信度
     switch (predictedClass) {
       case 'OPMD':
@@ -481,10 +386,10 @@ export class DiagnosisService {
   results.OPMD = confidence;
         break;
     }
-    
+
     // 确保所有值在有效范围内
   results.OPMD = Math.max(0.01, Math.min(0.99, results.OPMD));
-    
+
     console.log('Converted AI result to oral format:', results);
     return results;
   }
@@ -514,7 +419,7 @@ export class DiagnosisService {
   private calculateSeverityFromAiResult(aiResult: { predicted_class: string; confidence: number }): 'low' | 'medium' | 'high' {
     const confidence = aiResult.confidence;
     const predictedClass = aiResult.predicted_class;
-    
+
     if (predictedClass === 'OPMD') {
       if (confidence >= 0.9) return 'high';
       if (confidence >= 0.6) return 'medium';
@@ -685,38 +590,19 @@ export class DiagnosisService {
   }
 
   async getDiagnosisById(id: string): Promise<DiagnosisResult> {
-    const { data, error } = await supabase
-      .from('diagnoses')
-      .select()
-      .eq('id', id)
-      .single();
-
-    if (error || !data) {
+    const diagnosis = await this.repository().findById(id);
+    if (!diagnosis) {
       throw createError('Diagnosis not found', 404);
     }
-    return fromDbFormat(data as DiagnosisRow);
+    return diagnosis;
   }
 
   async getDiagnosisByPatient(patientId: string): Promise<DiagnosisResult[]> {
-    const { data, error } = await supabase
-      .from('diagnoses')
-      .select()
-      .eq('patient_id', patientId)
-      .order('created_at', { ascending: false });
-
-    if (error) throw error;
-    return (data || []).map((row: any) => fromDbFormat(row as DiagnosisRow));
+    return await this.repository().findByPatient(patientId);
   }
 
   async deleteDiagnosis(id: string): Promise<void> {
-    const { data, error } = await supabase
-      .from('diagnoses')
-      .delete()
-      .eq('id', id)
-      .select()
-      .single();
-
-    if (error || !data) {
+    if (!await this.repository().delete(id)) {
       throw createError('Diagnosis not found', 404);
     }
   }

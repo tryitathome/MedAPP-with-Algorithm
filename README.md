@@ -1,294 +1,432 @@
-# 口腔黏膜潜在恶性疾病自动化诊断模块开发记录文档
+# 口腔黏膜潜在恶性疾病智能诊断平台开发与运行指南
 
-本文件聚焦于口腔黏膜潜在恶性疾病（OPMD）智能平台三阶段流程：
+本文档说明 MedAPP 口腔模块的当前架构、运行方式、患者与诊断数据持久化、私有图片存储，以及三套本地 AI 算法的调用方式。
 
-1. 智能早期筛查（二分类 / 初筛）
-2. （进一步辅助诊断）→ 智能辅助诊断（三分类：OLK / OLP / OSF + 综合 OPMD 评分 + 深度检测 YOLO 可视化）
-3. （病灶区域分割）→ 病灶可视化（实例分割 Mask2Former）
+当前诊断流程：
 
-并补充：运行方式、端口、Python 环境、前端按钮与页面跳转逻辑、图片上传与结果展示数据流。
+1. 智能早期筛查：二分类模型；
+2. 进一步辅助诊断：YOLO 检测 OLK、OLP、OSF，生成检测框及综合 OPMD 结果；
+3. 病灶区域分割：MMDetection/Mask2Former 实例分割。
+
+> 本系统属于辅助诊断软件原型，不应作为独立临床诊断依据。提交、存储或展示患者数据时必须遵守适用的隐私、伦理和医疗数据管理要求。
 
 ---
 
-## 1. 运行与整体目录结构
+## 1. 项目结构
 
-根目录：`d:\MyWorkSpace\MedAPP`  
-Web Monorepo：`medical-imaging-web-main/` (Yarn Workspaces)  
-AI 模型及脚本：
+从 `MedAPP` 工作区根目录观察：
 
-| 模块 | 目录 | 主要脚本 | 权重/模型 | 说明 |
-|------|------|----------|-----------|------|
-| 二分类 / 三分类（初筛 + 多分类） | `Classify-LM-Simple-OralImages/` | `classify_image.py` | `best_model_2class.pth` | 由后端 `DiagnosisService.analyzeOral` 调用（分类） |
-| 深度检测（YOLO 多类别检测+框+再计算最大得分） | `YOLO12-Simplified-OralImages/` | `Yolo12Inference.py` | `best_155epoch_shengkouV2.pt` | 后端 `analyzeOralDeep` 使用 `--single-json` 输出 |
-| 病灶实例分割 | `MMDETECTION_mini/` | `image_demo.py` | `eval_ZJY_1102_mask2/*.pth` | 后端 `SegmentationService.runSegmentation` 调用 |
+| 模块 | 目录 | 主要入口 | 当前用途 |
+|---|---|---|---|
+| Web Monorepo | `medical-imaging-web-main/` | `yarn dev` | Next.js 前端、Express 后端、共享类型及 Supabase migrations |
+| 初筛分类 | `Classify-LM-Simple-OralImages/` | `classify_image.py` | 真实二分类推理 |
+| 深度检测 | `YOLO12-Simplified-OralImages/` | `Yolo12Inference.py` | OLK/OLP/OSF 检测、检测框和 JSON 输出 |
+| 实例分割 | `MMDETECTION_mini/` | `image_demo.py` | Mask2Former 病灶实例分割 |
 
-前后端（Next.js + Express）位于：`medical-imaging-web-main/apps/{frontend,backend}`
+Web 应用目录：
 
-启动开发（默认前端 3000，后端  5050，见下文）：
+```text
+medical-imaging-web-main/
+├── apps/
+│   ├── frontend/       # Next.js，默认端口 3000
+│   └── backend/        # Express，默认配置端口 5050
+├── packages/           # 前后端共享类型和工具
+├── supabase/migrations # 数据库及 Storage migrations
+└── package.json        # Yarn Workspaces 命令
+```
+
+---
+
+## 2. Windows 开发启动
+
+推荐从 Windows PowerShell 启动，因为当前 Python 解释器配置为 Windows Conda 环境：
 
 ```powershell
-cd d:\MyWorkSpace\MedAPP\medical-imaging-web-main
+cd C:\path\to\MedAPP\medical-imaging-web-main
 yarn install
-yarn dev           # 并发启动 frontend + backend（backend 端口=5000，若 .env 未覆盖）
-# 或使用：yarn dev:all  # 强制 backend 端口=5050 且 NO_DB=true（跳过数据库）
+yarn dev
 ```
 
-生产打包（仅前后端构建，不含 Python 环境）：
+默认访问地址：
+
+- 前端：`http://localhost:3000`
+- 后端健康检查：`http://localhost:5050/health`
+- 后端 API：`http://localhost:5050/api`
+
+`yarn dev` 和 `yarn dev:all` 当前执行相同的前后端并发启动命令。也可以分别启动：
 
 ```powershell
-yarn build
+yarn dev:frontend
+yarn dev:backend
 ```
 
----
+依赖通常只需安装一次。以下情况可能需要重新运行 `yarn install`：
 
-## 2. 默认端口与环境变量
+- 删除或更换了 `node_modules`；
+- `package.json` 或 `yarn.lock` 发生变化；
+- 切换了 Node.js 主版本；
+- 在 Windows 和 WSL 之间切换运行环境，尤其涉及原生依赖时。
 
-| 角色 | 默认端口 / 来源 | 说明 |
-|------|----------------|------|
-| 前端 Next.js | 3000（`apps/frontend/package.json` 中 `next dev --port 3000`） | 浏览器访问入口 |
-| 后端 API  | yarn dev 情况下，无显式覆盖 |
-| 后端（`yarn dev:all`） | 5050（脚本内设置 `$env:PORT=5050`） | 同时设置 `NO_DB=true`，适合算法联调 |
-| 静态分割/上传图片访问 | 同后端端口(`/uploads/...`) | Express 静态中间件提供 |
-
-关键环境变量（可放入根或 backend `.env`）：
-
-| 变量 | 功能 | 备注 |
-|------|------|------|
-| `PORT` | 后端监听端口 | 决定 API 与 `/uploads` 服务端口 |
-| `FRONTEND_URL` | CORS 白名单前端地址 | 默认 `http://localhost:3000` |
-| `NO_DB` | =true 时跳过 MongoDB 连接 | 开发快速联调 |
-| `PYTHON_EXE_PATH` | 分类脚本 Python 可执行路径（初筛+三分类） | 代码默认：`C:\Users\tryitathome\.conda\envs\LMCLASSIFY310\python.exe` |
-| `YOLO_PYTHON_EXE_PATH` | 深度检测 YOLO Python 路径 | 若缺失回退到 `PYTHON_EXE_PATH` 或 `D:\MyPrograms\Python3.9.9\python.exe` |
-| `YOLO_MODEL_PATH` | YOLO 权重路径 | 未设则使用项目默认 `best_155epoch_shengkouV2.pt` |
+不要在两个系统中共享一套不兼容的原生依赖缓存。当前项目和 Conda 路径以 Windows 运行方式为主。
 
 ---
 
-## 3. Python 环境与依赖位置（请本地创建并安装）
+## 3. 前端环境变量
 
-| 功能阶段 | 解释器路径（当前硬编码/默认） | 期望主要依赖 | 说明 |
-|----------|----------------------------|-------------|------|
-| 初筛（二分类）+ 三分类（OLK/OLP/OSF 逻辑分类脚本） | `C:\Users\tryitathome\.conda\envs\LMCLASSIFY310\python.exe` 或 `PYTHON_EXE_PATH` | `torch`, `torchvision`, `numpy`, 本地脚本 `classify_image.py` | 后端 `DiagnosisService.analyzeOral` 通过 `exec` 调用 |
-| 深度检测（YOLO 推理） | `YOLO_PYTHON_EXE_PATH` > `PYTHON_EXE_PATH` > `D:\MyPrograms\Python3.9.9\python.exe` | `ultralytics`, `opencv-python`, `torch`, `numpy` | 脚本：`YOLO12-Simplified-OralImages/Yolo12Inference.py`，输出 JSON + 可视化图像 |
-| 实例分割（Mask2Former / MMDetection） | `C:\Users\tryitathome\.conda\envs\MMDETECTION\python.exe` | `mmdet`, `mmengine`, `torch`, `opencv-python` 等 | 脚本：`MMDETECTION_mini/image_demo.py` |
+文件：`apps/frontend/.env.local`
 
-建议：为三者分别建立 Conda 环境，避免依赖冲突。由于整体体积过大部分文件未上传至Github，如需这些文件请向作者索取。
+```env
+NEXT_PUBLIC_API_URL=http://localhost:5050/api
+```
 
----
+该变量可以公开给浏览器，但只能包含 API 地址。任何 Supabase secret/service-role key 都不得放入前端，也不得使用 `NEXT_PUBLIC_` 前缀暴露。
 
-## 4. 前端主要页面与路径
-
-| 路径 | 文件 | 功能 |
-|------|------|------|
-| `/oral` | `apps/frontend/src/app/oral/page.tsx` | 过渡展示/介绍倒计时（5 秒自动跳转到 `/oral/diagnosis`） |
-| `/oral/diagnosis` | `.../oral/diagnosis/page.tsx` + `OralDiagnosisInterface` | 初筛（二分类）→ 进一步辅助诊断（三分类 + 深度检测）入口与综合 UI |
-| `/oral/segmentation` | `.../oral/segmentation/page.tsx` | 接收上一阶段图片 → 运行实例分割 → 展示叠加结果 |
+修改 `.env.local` 后，应重新启动 Next.js 开发服务器。
 
 ---
 
-## 5. 页面/按钮交互与跳转逻辑（核心流程）
+## 4. 后端环境变量
 
-### 5.1 总览流程（简化顺序图）
+文件：`apps/backend/.env`。模板见 `apps/backend/.env.example`。
+
+### 4.1 基础配置
+
+| 变量 | 作用 | 推荐开发值 |
+|---|---|---|
+| `PORT` | Express 监听端口 | `5050` |
+| `FRONTEND_URL` | CORS 允许的前端地址 | `http://localhost:3000` |
+| `NO_DB` | `true` 时强制使用进程内存数据库 | 使用 Supabase/MongoDB 时必须为 `false` |
+| `DATA_BACKEND` | `memory`、`mongodb` 或 `supabase` | 按部署环境选择 |
+| `STORAGE_BACKEND` | `local` 或 `supabase` | 使用云端私有图片时为 `supabase` |
+| `MONGODB_URI` | MongoDB 连接地址 | 仅 MongoDB 模式需要 |
+
+`NO_DB=true` 的优先级高于 `DATA_BACKEND`，即使写了 `DATA_BACKEND=supabase`，仍会使用内存模式且不会更新 Supabase 表。
+
+### 4.2 Supabase 配置
+
+```env
+NO_DB=false
+DATA_BACKEND=supabase
+STORAGE_BACKEND=supabase
+
+SUPABASE_URL=https://your-project-ref.supabase.co
+SUPABASE_SECRET_KEY=your-server-only-secret-key
+SUPABASE_STORAGE_BUCKET=oral-images
+SUPABASE_SIGNED_URL_TTL_SECONDS=300
+```
+
+兼容旧项目的变量名是 `SUPABASE_SERVICE_ROLE_KEY`。代码不读取 `SUPABASE_SERVICE_KEY`；类似下面的注释占位符本身不会生效：
+
+```env
+# SUPABASE_SERVICE_KEY=your-service-role-key-here
+```
+
+Supabase secret/service-role key 权限很高：
+
+- 只能放在 `apps/backend/.env` 或服务器的 secret manager；
+- 不得提交到 Git；
+- 不得发送到前端；
+- 泄露后应立即轮换；
+- 浏览器只通过 Express API 访问数据。
+
+数据访问结构：
 
 ```text
-用户选择图片/文件夹 -> 初筛检测(二分类/生成 finding & 建议) -> (按钮) 进一步辅助诊断 -> 深度检测(YOLO) -> 显示多分类+检测框 -> (按钮) 病灶区域分割 -> 跳转 /oral/segmentation -> 分割脚本 -> 叠加结果展示
+Browser → Express API → Supabase Database / private Storage
 ```
 
-### 5.2 关键按钮与触发函数（位于 `OralDiagnosisInterface`）
+后端启动时会检查 Supabase，并对短暂连接失败重试三次；持续无法访问时后端会退出，不会静默切换到内存数据库。
 
-| 按钮/动作 | 位置/组件 | 触发函数 / 逻辑 | 结果 |
-|-----------|-----------|------------------|------|
-| 上传单张图片 | `ControlButtons` | `handleSingleFileUpload` → `useFileUploadWithCompression.handleFileUpload` | 读取 → 压缩 → base64 保存 state `selectedImage` |
-| 批量上传患者文件夹 | `ControlButtons` | `handleFolderUpload` → `onBatchImport` | 解析文件夹 → 患者/多张图队列管理（批量导航） |
-| 开始初筛 / 诊断 | 底部栏 `BottomControls` | `handleDetectionStart` | 后端调用（分类脚本）→ `diagnosisResponse` 填充 finding/recommendation/各分数 |
-| 进一步辅助诊断 | 仅初筛完成且条件允许 | `handleStartDeepDetection` | 调用 `analyzeOralDeep`（YOLO），填充 `deepDetectionResults`，开启 `deepMode` |
-| 病灶区域分割 | 深度检测完成后显示 | push 路由：`/oral/segmentation?image=<encodeURIComponent(selectedImage)>` | 进入分割页，自动发起 `runSegmentation` |
-| 清空并返回（分割页） | `/oral/segmentation` 顶部按钮 | 清 sessionStorage + push `/oral/diagnosis` | 回到辅助诊断界面 |
-| 返回（诊断界面） | `ControlButtons` 中 Back 行为 | `handleBackAction` | 清空模式、患者、状态回初始界面 |
+### 4.3 Python 与超时配置
 
-### 5.3 `/oral/segmentation` 页自动逻辑
+| 变量 | 作用 | 当前建议 |
+|---|---|---|
+| `PYTHON_EXE_PATH` | 分类 Python | 指向 `oral_classify` 环境的 `python.exe` |
+| `CLASSIFY_TIMEOUT_MS` | 分类超时 | `180000` |
+| `YOLO_PYTHON_EXE_PATH` | YOLO Python | 指向安装了 Ultralytics 的环境 |
+| `YOLO_MODEL_PATH` | 可选 YOLO 权重覆盖 | 未设置时使用仓库默认权重 |
+| `MMDET_PYTHON_EXE_PATH` | MMDetection Python | 指向安装了 PyTorch/MMCV/MMEngine/MMDetection 的环境 |
+| `MMDET_DEVICE` | 分割设备 | `cpu` 或兼容 GPU 的 `cuda:0` |
+| `MMDET_TIMEOUT_MS` | 分割超时 | `600000` |
+| `MMDET_DIR` | 可选 MMDetection 目录覆盖 | 未设置时按工作区相对路径解析 |
+| `MMDET_SCRIPT_PATH` | 可选分割脚本覆盖 | 默认 `MMDETECTION_mini/image_demo.py` |
+| `MMDET_CONFIG_PATH` | 可选模型配置覆盖 | 默认项目 Mask2Former 配置 |
+| `MMDET_WEIGHTS_PATH` | 可选分割权重覆盖 | 默认项目分割权重 |
 
-1. 读取 URL 参数 `image`（base64 / blob / 已上传 URL）
-2. 若为 blob -> 转 base64（`convertBlobToBase64`）
-3. 调用 `runSegmentation({ image: base64 })`
-4. 后端：保存临时图片 → 调用分割脚本 → 复制结果到 `/uploads` → 返回 `overlayImageUrl`（相对路径）
-5. 前端构建静态资源完整 URL（`buildStaticUrl`）加载展示
+RTX 50 系列需要支持相应 CUDA compute capability 的 PyTorch 构建。旧 PyTorch/MMCV 若提示 `sm_120 is not compatible`，应暂时使用 `MMDET_DEVICE=cpu`，或整体升级为互相兼容的 PyTorch、CUDA、MMCV 和 MMDetection 组合；仅安装新版 CUDA Toolkit 不会修复旧 PyTorch wheel。
 
 ---
 
-## 6. 图片上传与检测 / 分割数据流
+## 5. Supabase 数据库与 migrations
 
-### 6.1 初筛与辅助诊断（/oral/diagnosis）
+按文件名顺序在 Supabase SQL Editor 执行 `supabase/migrations/` 中的脚本：
+
+1. `20260724000000_create_medapp_schema.sql`
+2. `20260727000000_add_segmentation_image_object_path.sql`
+3. `20260728000000_add_diagnoses_patient_fk.sql`
+
+基础结构：
 
 ```text
-<input type=file> -> File 对象 -> (可压缩) -> base64 -> selectedImage
-  ↓ 开始检测 (handleDetectionStart)
-POST /api/diagnosis/oral  (或内部口腔分类接口，代码执行 classify_image.py)
-  后端：
-    - 从 imageUrl 或 /uploads 中文件名解析本地路径（若先走上传接口）
-    - 若仅 base64 前端需要先显式 multipart 调用 /api/upload/image
-    - exec Python 分类脚本 -> stdout JSON -> 解析 AI 结果 -> 组装 finding/recommendation/知识点
-响应：diagnosisResponse.data.results (含 finding / recommendation / statusCode ...)
+patients
+  id          uuid primary key          # 数据库内部标识
+  patient_id  text unique not null       # 应用使用的患者标识
+
+diagnoses
+  id          uuid primary key
+  patient_id  text not null
+              foreign key → patients.patient_id
 ```
 
-最佳实践：若需要后端持久存档或用于后续深度检测/分割，前端应先 `FormData` 调用：
-`POST /api/upload/image` 字段名 `image` → 返回 `{ imageUrl: /api/upload/<filename> }`，此时 `diagnosisData.imageUrl` 使用该路径即可。
+外键行为：
 
-### 6.2 深度检测（YOLO）
+- 更新 `patients.patient_id`：`ON UPDATE CASCADE`；
+- 删除仍有诊断记录的患者：`ON DELETE RESTRICT`；
+- 添加外键前若存在孤立 diagnosis，migration 会失败并要求先修复数据。
+
+诊断图片字段：
+
+| 字段 | 内容 |
+|---|---|
+| `image_object_path` | 输入图片在私有 bucket 中的 object path |
+| `annotated_image_object_path` | YOLO 检测框结果 object path |
+| `segmentation_image_object_path` | MMDetection 分割结果 object path |
+
+YOLO 和分割结果使用独立列，分割不会覆盖检测框图片路径。
+
+`patients` 和 `diagnoses` 启用 RLS，但 migrations 不创建宽松的 `anon`/`authenticated` policy。Express 使用服务器 secret key 访问；不要为了方便添加允许所有用户读写的 RLS policy。
+
+---
+
+## 6. 私有 Storage 与本地临时文件
+
+Supabase bucket：`oral-images`，必须保持 `public=false`。
+
+对象结构：
 
 ```text
-触发 handleStartDeepDetection -> POST /api/diagnosis/oral-deep (内部调用 analyzeOralDeep)
-  后端：找到 uploads/<filename> -> exec YOLO 脚本 -> 输出 single_result.json / inference_results.jsonl
-  解析：detections[] -> 计算每类最高置信度 -> 生成 OLP/OLK/OSF/OPMD 分数
-  返回：deepDetectionResults（含 annotatedImage URL, detections, finding, recommendation 等）
-前端：进入 deepMode，展示检测框可视化 + 多分类结果 + “病灶区域分割”按钮
+oral-images/
+├── inputs/   # 上传的输入图片
+└── results/  # YOLO、MMDetection 等结果图片
 ```
 
-### 6.3 分割（/oral/segmentation）
+数据库只保存 object path，不保存 public URL 或 signed URL。API 返回响应时才生成短期 signed URL，默认有效期由 `SUPABASE_SIGNED_URL_TTL_SECONDS=300` 控制。
+
+即使启用 Supabase Storage，后端仍保留本地文件，因为分类、YOLO 和 MMDetection Python 脚本都从本地路径读取图片：
 
 ```text
-前端：runSegmentation({ image: base64 })
-POST /api/segmentation
-  后端路径：segmentation.controller -> segmentationService.runSegmentation
-    - 先保存 base64 -> 临时文件（uploadService.saveBase64Image）
-    - exec Mask2Former (image_demo.py) -> 结果 vis/<原文件名>
-    - 复制 -> backend/uploads/segmented_<timestamp>_<basename>.ext
-    - 返回 overlayImageUrl: /uploads/segmented_....png
-前端：buildStaticUrl -> <img src="http://localhost:5000/uploads/..."> 显示叠加图
+浏览器上传
+  ├─→ backend/uploads/ 本地文件 → Python 推理
+  └─→ Supabase private Storage → 持久存储
 ```
 
-### 6.4 静态文件访问差异说明
+本地路径不是云端持久化记录的替代品；Storage object path 才写入数据库。
 
-| 场景 | URL 示例 | 是否带 /api | 备注 |
-|------|---------|-------------|------|
-| 上传后获取图片 | `/api/upload/<filename>` | 是 | 走自定义路由（内部读取文件流） |
-| 分割 / YOLO 结果展示 | `/uploads/segmented_xxx.png` | 否 | 直接由 Express 静态目录提供，使 `<img>` 跨域更直观 |
+大小限制：
 
----
-
-## 7. 后端主要相关代码索引
-
-| 功能 | 文件 | 关键方法 / 内容 |
-|------|------|----------------|
-| Express 入口 & 静态目录 | `apps/backend/src/server.ts` | 端口、CORS、`/uploads` 静态服务 |
-| 上传 API | `apps/backend/src/routes/upload.routes.ts` | `POST /api/upload/image` (multer) |
-| 上传服务 | `apps/backend/src/services/upload.service.ts` | `processImage` / `saveBase64Image` |
-| 初筛 + 分类诊断 | `apps/backend/src/services/diagnosis.service.ts` | `analyzeOral`（分类脚本）、结果文本生成 |
-| 深度检测 YOLO | 同上 `analyzeOralDeep` | 解析 `single_result.json` 或 `inference_results.jsonl` |
-| 分割 | `apps/backend/src/services/segmentation.service.ts` | `runSegmentation`、环境检查、缓存清理 |
+- 前端选择单图时允许最高 50 MB，然后按当前配置压缩；
+- multipart 上传接口限制为 10 MB；
+- Supabase bucket migration 的单对象限制为 10 MB；
+- 支持 JPEG、PNG 和 WebP。
 
 ---
 
-## 8. 常见调试技巧
+## 7. 患者导入与持久化
 
-见对应位置的报错提示
+### 7.1 单张图片
+
+```text
+选择 File
+→ 校验并压缩
+→ 创建匿名应用患者
+→ 保留后端返回的 patient_id
+→ 选择图片状态
+→ 开始分类/诊断
+```
+
+单图上传后即创建匿名患者，而不是等诊断完成后再猜测患者身份。诊断使用该应用 `patient_id`。
+
+### 7.2 文件夹导入
+
+文件夹名称格式：
+
+```text
+患者姓名-主病案号-病名-YYMMDD-Y/N(-可选备注)
+```
+
+例如：
+
+```text
+张三-88888888-口腔扁平苔藓-250101-N-无标注
+```
+
+也支持患者文件夹中的 `metadata.json`、`patient.json`、`patient.txt`、`metadata.txt` 或 `patient.meta`。
+
+正确处理顺序：
+
+```text
+原始 File/webkitRelativePath
+→ 只解析一次患者元数据
+→ 查询患者；404 表示不存在
+→ 不存在则创建，已存在则复用
+→ 把应用 patient_id 附加到每张图片
+→ 压缩图片
+→ 使用保留的 patient_id 诊断
+```
+
+压缩后的 `File` 通常没有 `webkitRelativePath`，因此代码使用 `{ file, patientId }` 显式保留身份，不会在压缩后重新解析路径。同一患者文件夹只创建一次患者，多张图片共享相同 `patient_id`。
+
+应用层 `patient_id` 与 Supabase `patients.id` UUID 不同。当前 API 和 `DiagnosisResult.patientId` 继续使用应用 `patient_id`。
 
 ---
 
-## 9. 建议的未来改进-by GPT5
+## 8. 三阶段诊断数据流
 
-| 方向 | 建议 |
-|------|------|
-| 环境配置 | 将 Python 路径、模型文件改为集中 `config/*.json` 或 .env 动态加载，去除硬编码 |
-| 任务队列 | 分割 / 深度检测使用异步任务（BullMQ / RabbitMQ），避免长时间阻塞 Node 事件循环 |
-| 模型切换 | 前端提供下拉选择不同版本权重或阈值，后端通过参数透传 |
-| 缓存策略 | 对同一图片 hash 后的结果缓存，减少重复推理 |
-| 安全 | 上传文件类型与大小再加白名单校验，避免潜在脚本伪装 |
+### 8.1 初筛分类
+
+```text
+POST /api/upload/image       # multipart 字段 image
+→ 本地 uploads 文件 + 可选 Supabase inputs object
+→ POST /api/diagnosis/oral
+→ DiagnosisService.analyzeOral
+→ classify_image.py
+→ 保存 type='oral' diagnosis
+```
+
+真实 `analyzeOral` 推理路径是主路径，不应替换为 `analyzeOralDummy`。
+
+### 8.2 YOLO 深度检测
+
+```text
+POST /api/diagnosis/oral/deep
+→ Yolo12Inference.py --single-json
+→ 解析 detections
+→ 计算 OLK / OLP / OSF / OPMD
+→ 上传检测框图片
+→ 保存 type='oral-deep' diagnosis
+→ annotated_image_object_path
+```
+
+`Ultralytics` Python 包提供 YOLO 的模型加载、训练、验证和推理引擎；本仓库的 YOLO 脚本负责项目参数和结果转换。
+
+### 8.3 MMDetection 分割
+
+“病灶区域分割”按钮只在深度检测成功且获得 diagnosis UUID 后启用。跳转参数包括：
+
+```text
+/oral/segmentation?image=...&diagnosisId=...&patientId=...
+```
+
+分割页：
+
+```text
+blob URL → base64
+→ POST /api/segmentation
+→ 保存本地临时输入
+→ image_demo.py / Mask2Former
+→ 上传结果到 private Storage
+→ 更新现有 oral-deep diagnosis
+→ segmentation_image_object_path
+→ API 返回短期 signed URL
+```
+
+分割不会创建重复 diagnosis，也不会覆盖 `annotated_image_object_path`。
 
 ---
 
-## 10. 附：环境快速创建（示例，仅供参考）
+## 9. 前端页面
+
+| 路径 | 功能 |
+|---|---|
+| `/oral` | 口腔模块介绍及跳转 |
+| `/oral/diagnosis` | 单图/文件夹导入、初筛、深度检测、报告展示 |
+| `/oral/segmentation` | MMDetection 分割和结果展示 |
+
+错误弹窗会显示真实错误文本。浏览器问题应同时检查 F12：
+
+- `Console`：前端异常及请求地址；
+- `Network`：请求状态码与后端响应；
+- 后端终端：Python stderr、数据库、Storage 和超时错误。
+
+后端正常的 patient GET/POST 不一定产生大量终端日志，因此应以 Network 响应和 Supabase 表数据为准。
+
+---
+
+## 10. Python 环境建议
+
+建议分别创建环境，避免 PyTorch、Ultralytics、MMCV 版本冲突：
 
 ```powershell
-# Conda 创建分类环境
-conda create -n LMCLASSIFY310 python=3.10 -y
-conda activate LMCLASSIFY310
-pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu121
-pip install numpy pillow opencv-python
+# 分类环境：版本应优先按照分类仓库 environment.yml
+conda env create -n oral_classify -f Classify-LM-Simple-OralImages\environment.yml
 
-# YOLO 环境（可与上合并，但建议独立）
-conda create -n YOLO python=3.10 -y
-conda activate YOLO
-pip install ultralytics opencv-python torch torchvision numpy
+# YOLO 环境：版本应优先按照 YOLO Readme/environment.yml
+conda create -n oral_yolo python=3.10 -y
+conda activate oral_yolo
+pip install ultralytics opencv-python
 
-# MMDetection 环境
-conda create -n MMDETECTION python=3.10 -y
-conda activate MMDETECTION
-pip install torch torchvision --index-url https://download.pytorch.org/whl/cu121
-pip install mmengine mmdet==3.* opencv-python
+# MMDetection 环境必须使用互相兼容的 PyTorch/MMCV/MMEngine/MMDetection
+conda create -n mmdetection python=3.10 -y
+conda activate mmdetection
 ```
 
-> 注意：具体版本需与当前权重训练框架版本匹配，若出现算子不兼容请参考对应仓库 README。
+不要盲目安装最新版本。提供的权重可能依赖训练时的框架版本；优先根据 environment 文件、checkpoint metadata 和官方兼容矩阵确定版本。
+
+`mmcv` 源码构建失败时，不要直接反复 `pip install mmcv==...`。应优先选择与当前 PyTorch/CUDA 匹配的预编译 wheel，并确认 Python、PyTorch、MMCV 和 MMDetection 的兼容组合。
 
 ---
 
-## 11. 快速检查清单（上线/交付前）
 
-| 项目 | 是否完成 | 备注 |
-|------|----------|------|
-| `.env` 端口与 Python 路径配置 | ☐ | `PORT / PYTHON_EXE_PATH / YOLO_PYTHON_EXE_PATH` |
-| 模型权重存在性 | ☐ | 三套：分类 / YOLO / 分割 |
-| `/uploads` 写入权限 | ☐ | Windows 下注意防病毒占用 |
-| CORS 前端地址正确 | ☐ | 多端口多浏览器调试需添加 |
-| 压缩流程正常 | ☐ | 大图 <10MB 后端限制内 |
-| 深度检测结果含 annotatedImage | ☐ | 若无检查 YOLO 输出 JSON |
-| 分割结果 URL 可直接 `<img>` 访问 | ☐ | 形如 `/uploads/segmented_*.png` |
+## 11. 上线前检查清单
+
+| 项目 | 完成 |
+|---|---|
+| 前端 API 地址指向正确后端 | ☐ |
+| 后端端口和 CORS 配置正确 | ☐ |
+| `NO_DB`/`DATA_BACKEND`/`STORAGE_BACKEND` 组合正确 | ☐ |
+| Supabase migrations 已按顺序执行 | ☐ |
+| private bucket、RLS、外键检查通过 | ☐ |
+| secret key 仅存在于后端 | ☐ |
+| 三个 Python 路径和模型权重存在 | ☐ |
+| 分类、YOLO、MMDetection 环境分别验证 | ☐ |
+| 输入图、YOLO 图、分割图保存到不同 object path/列 | ☐ |
+| 单图及文件夹患者持久化正确 | ☐ |
+| TypeScript/backend builds 通过 | ☐ |
+| Next.js production prerender 问题已处理 | ☐ |
+| 患者隐私、备份及数据保留策略已确认 | ☐ |
 
 ---
 
-## 12. 术语对照
+## 12. 术语
 
 | 缩写 | 全称 | 说明 |
-|------|------|------|
-| OPMD | Oral Potentially Malignant Disorders | 口腔黏膜潜在恶性疾病集合概念 |
+|---|---|---|
+| OPMD | Oral Potentially Malignant Disorders | 口腔潜在恶性疾病集合概念 |
 | OLK | Oral Leukoplakia | 口腔白斑病 |
 | OLP | Oral Lichen Planus | 口腔扁平苔藓 |
 | OSF | Oral Submucous Fibrosis | 口腔黏膜下纤维化 |
+| RLS | Row Level Security | PostgreSQL/Supabase 行级安全 |
+| Object path | Storage 对象路径 | 持久化到数据库的路径，不是 public/signed URL |
 
 ---
 
-## 13. 维护说明
+## 13. 更新日志
 
-更新本文件时，请保持：
+### 2026-07-28
 
-1. 不在版本控制中泄露真实患者隐私数据；
-2. 若新增模型或脚本，请在“Python 环境与依赖位置”表中追加；
-3. 因重构变更 API 路径或上传策略，务必同步第 6 节数据流示意。
-
-
----
-
-## 14. 更新日志
-
-- 更新25.11.26
-
-修复了一些由GPT生成的Readme胡说八道中错误的部分
-
-- 更新25.10.23
-
-统一Python路径配置与修复后端路径别名解析
-
-- 新增统一Python路径配置系统
-  - 创建 python-paths.ts 配置加载器，支持环境变量和JSON配置文件
-  - 添加 .env.example 和 python-paths.example.json 示例文件
-  - 支持三种Python环境：classification, yoloDetection, segmentation
-
-- 修复后端tsconfig路径别名
-  - 更新 tsconfig.json 添加 @shared/* 通配别名
-  - 引入 tsc-alias 和 tsconfig-paths 支持运行时路径解析
-  - 修改 dev 和 build 脚本支持路径别名
-
-- 重构服务层Python路径管理
-  - diagnosis.service.ts: 移除硬编码路径，使用loadPythonPaths()
-  - segmentation.service.ts: 移除硬编码路径，改为相对路径+环境变量可覆盖
-  - 改进 checkEnvironment() 方法支持命令名和完整路径两种检查方式
-
-- 更新文档
-  - 在 A_ORAL_MODULE_DEVELOPER_GUIDE.md 添加Python路径配置章节
-  - 说明配置优先级、示例和环境依赖
-
-这些更改使代码能在不同机器上运行，无需修改硬编码路径。"
+- 更新 Windows 启动方式、默认端口和依赖安装说明；
+- 记录分类、YOLO、MMDetection 独立 Python 环境及 CPU fallback；
+- 增加 memory/MongoDB/Supabase repository 模式说明；
+- 增加 patients、diagnoses、外键和 migrations 说明；
+- 增加 private Supabase Storage、object path 和 signed URL 说明；
+- 记录单图及文件夹患者在压缩前后的身份保留逻辑；
+- 修正真实 diagnosis API 路径；
+- 区分 YOLO detection 图片和 MMDetection segmentation 图片字段；
+- 说明三个算法目录均不包含完整私有训练数据集；
+- 增加当前已知构建和网络问题。
 
 ---
 
-文档版本：v1.0  （生成日期：2025-10-23）  
+文档版本：v2.0
+更新日期：2026-07-28
 维护人：口腔黏膜智能诊断模块研发团队

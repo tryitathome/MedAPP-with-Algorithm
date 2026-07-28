@@ -3,6 +3,7 @@ import { Request, Response } from 'express';
 import { UploadService } from '../services/upload.service';
 import path from 'path';
 import fs from 'fs';
+import { objectStorageService } from '../services/object-storage.service';
 
 export class UploadController {
   private uploadService: UploadService;
@@ -22,10 +23,14 @@ export class UploadController {
       }
 
       const result = await this.uploadService.processImage(req.file);
+      const storageUrl = result.objectPath
+        ? await objectStorageService.createSignedUrl(result.objectPath)
+        : undefined;
       
       res.status(200).json({
         success: true,
         imageUrl: result.imageUrl,
+        ...(storageUrl ? { storageUrl } : {}),
         filename: result.filename,
         originalName: req.file.originalname,
         size: result.size,

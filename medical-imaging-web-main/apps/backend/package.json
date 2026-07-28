@@ -4,9 +4,9 @@
   "description": "Medical imaging diagnosis backend API",
   "main": "dist/server.js",
   "scripts": {
-    "dev": "nodemon -e ts,js,json --exec ts-node -r tsconfig-paths/register src/server.ts",
-    "build": "tsc && tsc-alias",
-    "start": "node dist/server.js",
+    "dev": "nodemon --watch src --ext ts,json --exec \"node -r dotenv/config -r ts-node/register/transpile-only -r tsconfig-paths/register ./src/server.ts\"",
+    "build": "tsc -b",
+    "start": "node -r dotenv/config dist/server.js",
     "test": "jest",
     "lint": "eslint src/**/*.ts",
     "format": "prettier --write src/**/*.ts"
@@ -14,6 +14,7 @@
   "dependencies": {
     "@shared/types": "^1.0.0",
     "@shared/utils": "^1.0.0",
+    "@supabase/supabase-js": "^2.39.0",
     "bcryptjs": "^2.4.3",
     "bull": "^4.11.3",
     "cors": "^2.8.5",
@@ -22,7 +23,7 @@
     "helmet": "^7.0.0",
     "joi": "^17.9.2",
     "jsonwebtoken": "^9.0.2",
-    "@supabase/supabase-js": "^2.39.0",
+    "mongoose": "^7.5.0",
     "nodemailer": "^6.9.4",
     "redis": "^4.6.8",
     "sharp": "^0.32.6",
@@ -40,8 +41,6 @@
     "nodemon": "^3.0.1",
     "prettier": "^3.0.2",
     "ts-node": "^10.9.1",
-    "typescript": "^5.0.0",
-    "tsconfig-paths": "^4.2.0",
-    "tsc-alias": "^1.8.7"
+    "typescript": "^5.0.0"
   }
 }

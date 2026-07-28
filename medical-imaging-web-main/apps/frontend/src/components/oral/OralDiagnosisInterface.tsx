@@ -33,15 +33,15 @@ import { useBatchPatientManagement } from '@/hooks/useBatchPatientManagement';
 
 // Type imports
 import { Patient } from '@shared/types';
-import { PatientFolderInfo } from '@/utils/folderParser';
+import type { ImportedPatientFolder } from '@/utils/folderPatientImport';
 
 const OralDiagnosisInterface: React.FC = () => {
   const colors = useColors();
   const router = useRouter();
-  
+
   // 模式管理 - 区分单文件模式和患者文件夹模式
   const [interfaceMode, setInterfaceMode] = useState<'none' | 'single' | 'folder'>('none');
-  
+
   // 压缩状态管理
   const [isCompressing, setIsCompressing] = useState(false);
   const [compressionProgress, setCompressionProgress] = useState({ current: 0, total: 0 });
@@ -50,10 +50,10 @@ const OralDiagnosisInterface: React.FC = () => {
     compressedTotalSize: number;
     fileCount: number;
   } | null>(null);
-  
+
   // 批量患者管理
   const batchPatientManagement = useBatchPatientManagement();
-  
+
   // State management using custom hooks
   const {
     // Diagnosis state
@@ -65,19 +65,20 @@ const OralDiagnosisInterface: React.FC = () => {
     diagnosisResponse,
     deepMode,
     deepDetectionResults,
+    deepDiagnosisId,
     isDeepLoading,
     canShowDeepButton,
-    
+
     // Modal state
     showInstructions,
     showError,
     showKnowledge,
     showReport,
     error,
-    
+
     // Patient management
     patientManagement,
-    
+
     // Diagnosis actions
     setShowError,
     setShowInstructions,
@@ -85,32 +86,32 @@ const OralDiagnosisInterface: React.FC = () => {
     setShowReport,
     setError,
     setDeepMode,
-    
+
     // Diagnosis handlers
     handleImageSelect,
     handleDetectionStart,
     handleReset,
     handleStartDeepDetection,
-    
+
     // Computed values
     buttonsEnabled,
     canStartDetection
   } = useOralDiagnosis();
-  
-  const { 
-    handleFileUpload, 
-    handleFolderUpload, 
-    isCompressing: hookIsCompressing, 
-    compressionProgress: hookCompressionProgress 
+
+  const {
+    handleFileUpload,
+    handleFolderUpload,
+    isCompressing: hookIsCompressing,
+    compressionProgress: hookCompressionProgress
   } = useFileUploadWithCompression({
-    onImageSelect: (image: string | null, file: File | null) => {
+    onImageSelect: (image: string | null, file: File | null, patientId?: string) => {
       if (file && image) {
         // 检查是否是批量导入的一部分
-        if (!batchPatientManagement.isReady) {
+        if (!patientId && !batchPatientManagement.isReady) {
           // 单文件模式（但不在这里设置 interfaceMode，避免与文件夹批量导入的同步竞态）
           batchPatientManagement.addSinglePatient(file);
         }
-        handleImageSelect(image, file);
+        handleImageSelect(image, file, patientId);
       }
     },
     onDetectionReset: () => {
@@ -122,16 +123,19 @@ const OralDiagnosisInterface: React.FC = () => {
       setError?.(error);
       setShowError(true);
     },
-    onBatchImport: (patients: PatientFolderInfo[]) => {
+    onBatchImport: (patients: ImportedPatientFolder[]) => {
       console.log('[OralInterface] onBatchImport 被调用, 新增患者数:', patients.length, '当前已有患者数:', batchPatientManagement.totalPatients);
-      patients.forEach((p: PatientFolderInfo, idx: number) => {
+      patients.forEach((p, idx) => {
         console.log(`[OralInterface] 新增患者 ${idx + 1}: 姓名=${p.name}, 图片数=${p.images.length}, 诊断=${p.diagnosis}`);
       });
-      
+
       batchPatientManagement.importPatients(patients);
       // 确保进入文件夹模式
       setInterfaceMode('folder');
       console.log('[OralInterface] 累积导入完成，总患者数:', batchPatientManagement.totalPatients + patients.length);
+    },
+    onSinglePatientPersisted: (file: File, patientId: string) => {
+      batchPatientManagement.addSinglePatient(file, undefined, patientId);
     },
     onCompressionStart: () => {
       setIsCompressing(true);
@@ -144,7 +148,7 @@ const OralDiagnosisInterface: React.FC = () => {
       setIsCompressing(false);
       setCompressionProgress({ current: 0, total: 0 });
       setCompressionStats(results);
-      
+
       // 显示压缩完成的提示
       setTimeout(() => {
         setCompressionStats(null);
@@ -194,18 +198,28 @@ const OralDiagnosisInterface: React.FC = () => {
       // 当批量管理中切换图片时，更新选中的图片
       if (selectedImage !== batchPatientManagement.currentImageUrl) {
         console.log('[OralInterface] 同步图片到界面:', batchPatientManagement.currentImageUrl, 'mode=', interfaceMode);
-        handleImageSelect(batchPatientManagement.currentImageUrl, batchPatientManagement.currentImage);
+        handleImageSelect(
+          batchPatientManagement.currentImageUrl,
+          batchPatientManagement.currentImage,
+          batchPatientManagement.currentImagePatientId ?? undefined
+        );
       }
     }
-  }, [batchPatientManagement.currentImageUrl, batchPatientManagement.currentImage]);
+  }, [
+    batchPatientManagement.currentImageUrl,
+    batchPatientManagement.currentImage,
+    batchPatientManagement.currentImagePatientId,
+    handleImageSelect,
+    selectedImage
+  ]);
 
   // 监听批量患者管理中的当前患者变化，同步到患者管理钩子
   React.useEffect(() => {
     console.log('[OralInterface] 患者同步useEffect触发 - currentPatient:', batchPatientManagement.currentPatient?.name, 'interfaceMode:', interfaceMode);
-    
+
     if (batchPatientManagement.currentPatient && interfaceMode === 'folder') {
       const batchPatient = batchPatientManagement.currentPatient;
-      
+
       // 【修改】跳过占位符患者的信息同步
       if (batchPatient.id === 'placeholder-patient') {
         console.log('[OralInterface] 跳过占位符患者的信息同步，自动切换到下一个患者');
@@ -213,9 +227,9 @@ const OralDiagnosisInterface: React.FC = () => {
         batchPatientManagement.handleNextPatient();
         return;
       }
-      
+
       console.log('[OralInterface] 同步患者信息 - 当前患者:', batchPatient);
-      
+
       // 将批量患者管理的患者信息同步到常规患者管理
       if (batchPatient.folderInfo) {
         const syncedPatient: Patient = {
@@ -241,7 +255,7 @@ const OralDiagnosisInterface: React.FC = () => {
         <div className="absolute bottom-20 right-20 w-96 h-96 bg-indigo-500/20 rounded-full blur-3xl animate-pulse" style={{ animationDelay: '2s' }}></div>
         <div className="absolute top-1/2 left-1/2 w-64 h-64 bg-purple-500/20 rounded-full blur-3xl animate-pulse" style={{ animationDelay: '4s' }}></div>
       </div>
-      
+
       <div className="relative z-10 container mx-auto px-4 py-8">
         {/* Header */}
         <div className="text-center mt-20 mb-8">
@@ -249,19 +263,19 @@ const OralDiagnosisInterface: React.FC = () => {
             {deepMode ? '口腔黏膜潜在恶性疾病智能辅助诊断' : '口腔黏膜潜在恶性疾病智能早期筛查'}
           </h1>
         </div>
-        
+
         {/* Main Interface */}
         <div className="max-w-6xl mx-auto">
           <GlassCard className="p-8">
             {/* Top Control Buttons */}
-            <ControlButtons 
+            <ControlButtons
               onFileUpload={handleSingleFileUpload}
               onFolderUpload={handleFolderUpload}
               onShowInstructions={() => setShowInstructions(true)}
               interfaceMode={interfaceMode}
               onBackAction={handleBackAction}
             />
-            
+
             {/* Main Content Area */}
             <div className="grid grid-cols-1 lg:grid-cols-2 gap-8">
               {/* Left Side - Image Display and Patient Navigation */}
@@ -274,7 +288,7 @@ const OralDiagnosisInterface: React.FC = () => {
                   stats={compressionStats}
                   onStatsClose={() => setCompressionStats(null)}
                 />
-                
+
                 {/* 【新增】无患者时的提示 */}
                 {interfaceMode === 'none' && (
                   <div className="bg-blue-50/10 border border-blue-200/30 rounded-lg p-6 text-center">
@@ -294,7 +308,7 @@ const OralDiagnosisInterface: React.FC = () => {
                     </div>
                   </div>
                 )}
-                
+
                 {/* 【新增】患者导航控件（仅在folder模式下显示） */}
                 {interfaceMode === 'folder' && (
                   <div className="bg-white/5 border border-white/10 rounded-lg p-4">
@@ -303,14 +317,14 @@ const OralDiagnosisInterface: React.FC = () => {
                         onClick={batchPatientManagement.handlePrevPatient}
                         disabled={!batchPatientManagement.canNavigatePrevPatient}
                         className={`px-4 py-2 rounded-lg text-sm font-medium transition-colors ${
-                          batchPatientManagement.canNavigatePrevPatient 
-                            ? colors.buttonGhost + ' hover:bg-white/10' 
+                          batchPatientManagement.canNavigatePrevPatient
+                            ? colors.buttonGhost + ' hover:bg-white/10'
                             : 'bg-gray-500/50 cursor-not-allowed text-gray-400'
                         }`}
                       >
                         ← 上一个患者
                       </button>
-                      
+
                       <div className={`${colors.textPrimary} text-sm font-medium text-center`}>
                         <div>
                           患者 {batchPatientManagement.currentPatientIndex + 1} / {batchPatientManagement.totalPatients}
@@ -319,13 +333,13 @@ const OralDiagnosisInterface: React.FC = () => {
                           共 {batchPatientManagement.totalPatients} 个患者
                         </div>
                       </div>
-                      
+
                       <button
                         onClick={batchPatientManagement.handleNextPatient}
                         disabled={!batchPatientManagement.canNavigateNextPatient}
                         className={`px-4 py-2 rounded-lg text-sm font-medium transition-colors ${
-                          batchPatientManagement.canNavigateNextPatient 
-                            ? colors.buttonGhost + ' hover:bg-white/10' 
+                          batchPatientManagement.canNavigateNextPatient
+                            ? colors.buttonGhost + ' hover:bg-white/10'
                             : 'bg-gray-500/50 cursor-not-allowed text-gray-400'
                         }`}
                       >
@@ -334,13 +348,13 @@ const OralDiagnosisInterface: React.FC = () => {
                     </div>
                   </div>
                 )}
-                
-                <ImageUploadArea 
+
+                <ImageUploadArea
                   // selectedImage={patientManagement.isCurrentPatientDummy ? selectedImage : (diagnosisResponse?.data.imageUrl || selectedImage)}
                   selectedImage={selectedImage}
                   onFileUpload={handleFileUpload}
                 />
-                
+
                 {/* 【新增】深度模式下在左侧显示检测框可视化 */}
                 {deepMode && (
                   <DeepDetectionVisualization
@@ -348,7 +362,7 @@ const OralDiagnosisInterface: React.FC = () => {
                   />
                 )}
               </div>
-              
+
               {/* Right Side - Patient Info and Diagnosis Results */}
               <div className="space-y-6">
                 {deepMode ? (
@@ -364,13 +378,19 @@ const OralDiagnosisInterface: React.FC = () => {
                       <div className="pb-6">
                         <button
                           onClick={() => {
-                            if (selectedImage) {
+                            const patientId = diagnosisResponse?.data.patientId;
+                            if (selectedImage && deepDiagnosisId && patientId) {
                               // 保存当前患者数据到 sessionStorage
                               sessionStorage.setItem('oral_current_patient_data', JSON.stringify(patientManagement.currentPatientData));
-                              router.push(`/oral/segmentation?image=${encodeURIComponent(selectedImage)}`);
+                              const query = new URLSearchParams({
+                                image: selectedImage,
+                                diagnosisId: deepDiagnosisId,
+                                patientId
+                              });
+                              router.push(`/oral/segmentation?${query.toString()}`);
                             }
                           }}
-                          disabled={!selectedImage}
+                          disabled={!selectedImage || !deepDiagnosisId || !diagnosisResponse?.data.patientId}
                           className="w-full py-3 rounded-md bg-gradient-to-r from-emerald-500 to-teal-600 text-white font-medium hover:opacity-90 disabled:opacity-60 transition shadow-md"
                         >
                           病灶区域分割
@@ -380,7 +400,7 @@ const OralDiagnosisInterface: React.FC = () => {
                   </>
                 ) : (
                   <>
-                    <DiagnosisResults 
+                    <DiagnosisResults
                       results={detectionResults ?? undefined}
                       finding={diagnosisResponse?.data.results.finding}
                       recommendation={diagnosisResponse?.data.results.recommendation}
@@ -402,9 +422,9 @@ const OralDiagnosisInterface: React.FC = () => {
                 )}
               </div>
             </div>
-            
+
             {/* Bottom Controls */}
-            <BottomControls 
+            <BottomControls
               buttonsEnabled={buttonsEnabled}
               onShowReport={() => setShowReport(true)}
               onShowKnowledge={() => setShowKnowledge(true)}
@@ -428,29 +448,29 @@ const OralDiagnosisInterface: React.FC = () => {
           </GlassCard>
         </div>
       </div>
-      
+
       {/* Modals */}
-      <InstructionsModal 
+      <InstructionsModal
         isOpen={showInstructions}
         onClose={() => setShowInstructions(false)}
       />
-      
+
       <ErrorModal
         isOpen={showError}
         onClose={() => setShowError(false)}
-        errorMessage={error}
+        message={error}
       />
-      
-      <KnowledgeModal 
+
+      <KnowledgeModal
         isOpen={showKnowledge}
         onClose={() => setShowKnowledge(false)}
-        knowledgeContent={deepMode ? 
+        knowledgeContent={deepMode ?
           (deepDetectionResults?.knowledge || diagnosisResponse?.data.results.knowledge) :
           diagnosisResponse?.data.results.knowledge
         }
       />
-      
-      <ReportModal 
+
+      <ReportModal
         isOpen={showReport}
         onClose={() => setShowReport(false)}
         patientData={patientManagement.currentPatientData}

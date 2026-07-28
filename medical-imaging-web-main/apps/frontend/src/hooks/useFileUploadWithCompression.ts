@@ -2,13 +2,20 @@
 import { useCallback, useState } from 'react';
 import { useFileUpload } from './useFileUpload';
 import { compressImage, compressImages, formatFileSize, type CompressionOptions } from '@/utils/imageCompression';
-import { processBatchImport, parsePatientFromFilePath, parsePatientMetadataFile, type PatientFolderInfo } from '@/utils/folderParser';
+import { processBatchImport, parsePatientMetadataFile, type PatientFolderInfo } from '@/utils/folderParser';
+import {
+  ensureFolderPatients,
+  replaceImportedImageFiles,
+  type ImportedPatientFolder
+} from '@/utils/folderPatientImport';
+import { patientService } from '@/services/api/patientService';
 
 interface UseFileUploadWithCompressionProps {
-  onImageSelect: (image: string | null, file: File | null) => void;
+  onImageSelect: (image: string | null, file: File | null, patientId?: string) => void;
   onDetectionReset: () => void;
   onError: (error: string) => void;
-  onBatchImport?: (patients: PatientFolderInfo[]) => void;
+  onBatchImport?: (patients: ImportedPatientFolder[]) => void;
+  onSinglePatientPersisted?: (file: File, patientId: string) => void;
   compressionOptions?: CompressionOptions;
   onCompressionStart?: () => void;
   onCompressionProgress?: (current: number, total: number) => void;
@@ -28,6 +35,7 @@ export const useFileUploadWithCompression = ({
   onDetectionReset,
   onError,
   onBatchImport,
+  onSinglePatientPersisted,
   compressionOptions = {
     maxWidth: 1600,
     maxHeight: 1200,
@@ -100,23 +108,30 @@ export const useFileUploadWithCompression = ({
         fileCount: 1
       });
       
-      // 尝试从文件路径解析患者信息
-      const patientInfo = parsePatientFromFilePath(compressionResult.compressedFile);
-      if (patientInfo && onBatchImport) {
-        onBatchImport([patientInfo]);
-      }
-      
+      // Persist the anonymous application patient during import so the selected
+      // image carries a real patient_id before diagnosis begins.
+      const patient = await patientService.createPatient({
+        name: '隐私检测模式-匿名患者',
+        age: 0,
+        gender: 'other',
+        medicalHistory: []
+      });
+      const patientId = patient.data.id;
+
       // Create image preview URL
       const imageUrl = URL.createObjectURL(compressionResult.compressedFile);
-      
+
+      onSinglePatientPersisted?.(compressionResult.compressedFile, patientId);
+
       // Update state with both image URL and compressed file
-      onImageSelect(imageUrl, compressionResult.compressedFile);
+      onImageSelect(imageUrl, compressionResult.compressedFile, patientId);
       
       console.log(`[Compression] 单张图片压缩完成: ${formatFileSize(compressionResult.originalSize)} → ${formatFileSize(compressionResult.compressedSize)} (压缩率: ${(compressionResult.compressionRatio * 100).toFixed(1)}%)`);
       
     } catch (error) {
-      console.error('图片压缩失败:', error);
-      onError('图片压缩失败，请重试');
+      console.error('单张图片导入失败:', error);
+      const message = error instanceof Error ? error.message : '未知错误';
+      onError(`单张图片导入失败：${message}`);
     } finally {
       setIsCompressing(false);
       setCompressionProgress({ current: 0, total: 0 });
@@ -124,7 +139,7 @@ export const useFileUploadWithCompression = ({
     
     // Clear input value to allow re-uploading the same file
     event.target.value = '';
-  }, [onImageSelect, onDetectionReset, onError, onBatchImport, validateFile, compressionOptions, onCompressionStart, onCompressionComplete]);
+  }, [onImageSelect, onDetectionReset, onError, onSinglePatientPersisted, validateFile, compressionOptions, onCompressionStart, onCompressionComplete]);
 
   const handleFolderUpload = useCallback(async (event: React.ChangeEvent<HTMLInputElement>) => {
     const files = event.target.files;
@@ -165,6 +180,7 @@ export const useFileUploadWithCompression = ({
           const parsedMeta = await parsePatientMetadataFile(f);
           if (parsedMeta) {
             console.log(`[FileUpload] 成功解析元数据:`, parsedMeta);
+            parsedMeta.folderPath = folderName;
             // 如果之前已有该 folder 的解析，合并图片
             if (metaGroups[folderName]) {
               const old = metaGroups[folderName];
@@ -208,6 +224,16 @@ export const useFileUploadWithCompression = ({
         finalPatients.push(...result.patients);
       }
 
+      if (finalPatients.length === 0) {
+        onError('未找到符合格式的患者文件夹或元数据文件。');
+        return;
+      }
+
+      // Persist each parsed folder patient exactly once while the original
+      // File objects still carry webkitRelativePath. The returned application
+      // patient_id is attached explicitly to every image before compression.
+      const importedPatients = await ensureFolderPatients(finalPatients, patientService);
+
       // 批量压缩所有患者的所有图片
       let originalTotalSize = 0;
       let compressedTotalSize = 0;
@@ -215,18 +241,19 @@ export const useFileUploadWithCompression = ({
       let processedCount = 0;
 
       // 计算总图片数量
-      for (const patient of finalPatients) {
+      for (const patient of importedPatients) {
         totalImageCount += patient.images.length;
       }
 
       setCompressionProgress({ current: 0, total: totalImageCount });
 
       // 逐个患者处理图片压缩
-      for (const patient of finalPatients) {
+      for (const patient of importedPatients) {
         if (patient.images.length > 0) {
+          const sourceFiles = patient.images.map(image => image.file);
           // 压缩当前患者的所有图片
           const compressionResults = await compressImages(
-            patient.images,
+            sourceFiles,
             compressionOptions,
             (completed, total) => {
               const currentTotal = processedCount + completed;
@@ -236,7 +263,10 @@ export const useFileUploadWithCompression = ({
           );
 
           // 更新患者的图片为压缩后的版本
-          patient.images = compressionResults.map(result => result.compressedFile);
+          patient.images = replaceImportedImageFiles(
+            patient.images,
+            compressionResults.map(result => result.compressedFile)
+          );
           
           // 累计统计
           for (const result of compressionResults) {
@@ -262,24 +292,20 @@ export const useFileUploadWithCompression = ({
         onError(`导入完成，但有 ${result.errors.length} 个警告。请查看控制台了解详情。`);
       }
 
-      if (finalPatients.length === 0) {
-        onError('未找到符合格式的患者文件夹或元数据文件。');
-        return;
-      }
-
       if (onBatchImport) {
-        onBatchImport(finalPatients);
+        onBatchImport(importedPatients);
       }
 
-      if (finalPatients.length > 0 && finalPatients[0].images.length > 0) {
-        const firstImage = finalPatients[0].images[0];
-        const imageUrl = URL.createObjectURL(firstImage);
-        onImageSelect(imageUrl, firstImage);
+      if (importedPatients.length > 0 && importedPatients[0].images.length > 0) {
+        const firstImage = importedPatients[0].images[0];
+        const imageUrl = URL.createObjectURL(firstImage.file);
+        onImageSelect(imageUrl, firstImage.file, firstImage.patientId);
       }
 
     } catch (error) {
       console.error('批量导入失败:', error);
-      onError('批量导入失败，请重试。');
+      const message = error instanceof Error ? error.message : '未知错误';
+      onError(`批量导入失败：${message}`);
     } finally {
       setIsCompressing(false);
       setCompressionProgress({ current: 0, total: 0 });

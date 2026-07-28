@@ -15,6 +15,8 @@ export interface OralDiagnosisRequest {
 export interface OralDiagnosisResponse {
   success: boolean;
   data: {
+    id?: string;
+    _id?: string;
     results: {
       // Detection scores
       OLP: number;
@@ -37,6 +39,8 @@ export interface OralDiagnosisResponse {
 
       // Deep detection specific fields
       annotatedImage?: string; // Annotated image URL for deep detection
+      segmentationImage?: string; // Signed MMDetection segmentation image URL
+      storageSegmentationImageUrl?: string;
       detections?: Array<{
         class_id: number;
         class_name: string;

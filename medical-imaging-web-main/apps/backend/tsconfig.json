@@ -22,17 +22,19 @@
     "allowSyntheticDefaultImports": true,
     "experimentalDecorators": true,
     "emitDecoratorMetadata": true,
-    "baseUrl": "./src",
+    // Use project root as baseUrl to simplify path mappings
+    "baseUrl": ".",
     "paths": {
-      "@/*": ["*"],
+      "@/*": ["src/*"],
       "@shared/types": ["../../packages/shared-types/src"],
-      "@shared/utils": ["../../packages/shared-utils/src"],
-      "@shared/config": ["../../packages/shared-config/src"],
-      "@shared/*": ["../../packages/*/src"]
+      "@shared/utils": ["../../packages/shared-utils/src"]
     }
   },
   "include": [
     "src/**/*"
+  ],
+  "references": [
+    { "path": "../../packages/shared-types" }
   ],
   "exclude": [
     "node_modules",

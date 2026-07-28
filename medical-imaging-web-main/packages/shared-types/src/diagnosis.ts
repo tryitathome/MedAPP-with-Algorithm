@@ -12,6 +12,7 @@ export interface DiagnosisResponse {
   OLK?: number;
   OOML?: number; // legacy
   OPMD?: number; // new field for real AI output
+  OSF?: number;
   // New knowledge field for markdown content
   knowledge?: string;
   // Added detailed report recommendation (third text block)
@@ -30,7 +31,7 @@ export interface DiagnosisResult {
   _id?: string;
   id?: string; // for compatibility
   patientId: string;
-  type: 'gastritis' | 'oral';
+  type: 'gastritis' | 'oral' | 'oral-deep';
   imageUrl: string;
   results: DiagnosisResponse;
   createdAt?: Date;

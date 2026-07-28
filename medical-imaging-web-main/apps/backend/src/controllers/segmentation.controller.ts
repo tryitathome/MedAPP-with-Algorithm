@@ -4,14 +4,18 @@ import { segmentationService } from '../services/segmentation.service';
 import { uploadService } from '../services/upload.service';
 import path from 'path';
 import fs from 'fs';
+import { objectStorageService } from '../services/object-storage.service';
+import { DiagnosisService } from '../services/diagnosis.service';
 
 export class SegmentationController {
+  private readonly diagnosisService = new DiagnosisService();
+
   /**
    * 执行图片实例分割
    */
   async runSegmentation(req: Request, res: Response): Promise<void> {
     try {
-      const { image, imageUrl } = req.body;
+      const { image, imageUrl, diagnosisId, patientId } = req.body;
 
       if (!image && !imageUrl) {
         res.status(400).json({
@@ -61,14 +65,28 @@ export class SegmentationController {
       const result = await segmentationService.runSegmentation({
         imagePath: inputImagePath
       });
+      const signedOverlayUrl = result.overlayImageObjectPath
+        ? await objectStorageService.createSignedUrl(result.overlayImageObjectPath)
+        : undefined;
+      let diagnosisPersisted = false;
+      if (diagnosisId && patientId && result.overlayImageObjectPath) {
+        await this.diagnosisService.attachSegmentationResult(
+          String(diagnosisId),
+          String(patientId),
+          result.overlayImageObjectPath
+        );
+        diagnosisPersisted = true;
+      }
 
       res.json({
         success: true,
         data: {
-          overlayImageUrl: result.overlayImageUrl,
+          overlayImageUrl: signedOverlayUrl ?? result.overlayImageUrl,
           inferenceTimeMs: result.inferenceTimeMs,
           modelVersion: result.modelVersion,
-          originalImagePath: result.originalImagePath
+          originalImagePath: result.originalImagePath,
+          diagnosisId: diagnosisId ?? undefined,
+          diagnosisPersisted
         }
       });
 

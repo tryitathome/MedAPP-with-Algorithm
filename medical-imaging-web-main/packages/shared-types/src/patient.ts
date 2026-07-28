@@ -12,12 +12,18 @@ export interface Patient {
 }
 
 export interface CreatePatientRequest {
+  /** Stable application identifier stored as patients.patient_id. */
+  patientId?: string;
   name: string;
   age: number;
   gender: 'male' | 'female' | 'other';
   email?: string;
   phone?: string;
   medicalHistory?: string[];
+  caseNumber?: string;
+  diagnosisDate?: string;
+  biopsyConfirmed?: boolean;
+  doctor?: string;
 }
 
 export interface UpdatePatientRequest extends Partial<CreatePatientRequest> {
